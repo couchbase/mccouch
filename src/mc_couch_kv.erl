@@ -51,7 +51,7 @@ json_decode(V) ->
     end.
 
 %% ok, Flags, Expiration, Cas, Data
--spec get(_, binary()) -> {ok, integer(), integer(), integer(), binary()}.
+-spec get(_, binary()) -> {ok, integer(), integer(), integer(), binary()} | not_found.
 get(Db, Key) ->
     case couch_db:open_doc(Db, Key, []) of
         {ok, Doc} ->
