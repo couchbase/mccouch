@@ -2,6 +2,8 @@
 
 -export([start_link/1, init/1]).
 
+-include("couch_db.hrl").
+
 % Starting the server
 
 start_link(PortNum) ->
@@ -17,6 +19,7 @@ init(PortNum) ->
                                         {reuseaddr, true},
                                         {packet, raw},
                                         {active, false}]),
+    ?LOG_INFO("mccouch is listening on port ~p", [PortNum]),
     accept_loop(LS).
 
 % Accept incoming connections

@@ -2,14 +2,14 @@
 
 -behaviour(supervisor).
 
--export([start_link/0]).
+-export([start_link/1]).
 
 -export([init/1]).
 
 -define(SERVER, ?MODULE).
 
-start_link() ->
-    supervisor:start_link({local, ?SERVER}, ?MODULE, []).
+start_link(PortNum) ->
+    supervisor:start_link({local, ?SERVER}, ?MODULE, [PortNum]).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -24,7 +24,7 @@ start_link() ->
 %%                     {error, Reason}
 %% @end
 %%--------------------------------------------------------------------
-init([]) ->
+init([PortNum]) ->
     RestartStrategy = one_for_all,
     MaxRestarts = 1000,
     MaxSecondsBetweenRestarts = 3600,
@@ -35,7 +35,7 @@ init([]) ->
     Shutdown = 2000,
     Type = worker,
 
-    TcpListener = {mc_tcp_listener, {mc_tcp_listener, start_link, [11213]},
+    TcpListener = {mc_tcp_listener, {mc_tcp_listener, start_link, [PortNum]},
                    Restart, Shutdown, Type, [mc_tcp_listener]},
 
     ConnSup = {mc_conn_sup, {mc_conn_sup, start_link, []},
