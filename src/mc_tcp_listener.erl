@@ -1,35 +1,26 @@
 -module (mc_tcp_listener).
 
--export([start/1, start/2, start_link/1, start_link/2, init/2]).
+-export([start_link/1, init/1]).
 
 % Starting the server
-start(Handler) ->
-    start(11211, Handler).
 
-start(PortNum, Handler) when is_integer(PortNum) ->
-    {ok, spawn(?MODULE, init, [PortNum, Handler])}.
-
-start_link(Handler) ->
-    start_link(11211, Handler).
-
-start_link(PortNum, Handler) when is_integer(PortNum) ->
-    {ok, spawn_link(?MODULE, init, [PortNum, Handler])}.
-
+start_link(PortNum) ->
+    {ok, spawn_link(?MODULE, init, [PortNum])}.
 
 %
 % The server itself
 %
 
 % server self-init
-init(PortNum, StorageServer) ->
+init(PortNum) ->
     {ok, LS} = gen_tcp:listen(PortNum, [binary,
                                         {reuseaddr, true},
                                         {packet, raw},
                                         {active, false}]),
-    accept_loop(LS, StorageServer).
+    accept_loop(LS).
 
 % Accept incoming connections
-accept_loop(LS, StorageServer) ->
+accept_loop(LS) ->
     {ok, NS} = gen_tcp:accept(LS),
     mc_conn_sup:start_connection(NS),
-    accept_loop(LS, StorageServer).
+    accept_loop(LS).

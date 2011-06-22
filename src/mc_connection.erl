@@ -1,12 +1,13 @@
 -module (mc_connection).
 
--export([start_link/2, init/2]).
+-export([start_link/1, init/1]).
 -export([respond/5, respond/4]).
 
+-include("couch_db.hrl").
 -include("mc_constants.hrl").
 
-start_link(Handler, Socket) ->
-    {ok, spawn_link(?MODULE, init, [Socket, Handler])}.
+start_link(Socket) ->
+    {ok, spawn_link(?MODULE, init, [Socket])}.
 
 bin_size(undefined) -> 0;
 bin_size(IoList) -> iolist_size(IoList).
@@ -93,9 +94,10 @@ process_message(Socket, StorageServer, {ok, <<?REQ_MAGIC:8, OpCode:8, KeyLen:16,
         Res -> respond(Socket, OpCode, Opaque, Res)
     end.
 
-init(Socket, Handler) ->
+init(Socket) ->
     %% The spawner will tell us when we are the controlling process.
     receive go -> ok end,
+    {ok, Handler} = mc_daemon:start_link(),
     loop(Socket, Handler).
 
 loop(Socket, Handler) ->

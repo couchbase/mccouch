@@ -15,8 +15,8 @@ start_link() ->
 
 init([]) ->
     {ok, {{simple_one_for_one, 0, 1},
-          [{mc_connection, {mc_connection, start_link, [mc_daemon]},
-            temporary, brutal_kill, worker, [mc_connection]}]}}.
+          [{mc_connection, {mc_connection, start_link, []},
+            temporary, brutal_kill, worker, [mc_connection, mc_daemon]}]}}.
 
 start_connection(NS) ->
     {ok, Pid} = supervisor:start_child(?MODULE, [NS]),

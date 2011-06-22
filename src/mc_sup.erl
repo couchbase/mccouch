@@ -2,14 +2,14 @@
 
 -behaviour(supervisor).
 
--export([start_link/2]).
+-export([start_link/0]).
 
 -export([init/1]).
 
 -define(SERVER, ?MODULE).
 
-start_link(DbName, JsonMode) ->
-    supervisor:start_link({local, ?SERVER}, ?MODULE, [DbName, JsonMode]).
+start_link() ->
+    supervisor:start_link({local, ?SERVER}, ?MODULE, []).
 
 %%--------------------------------------------------------------------
 %% @private
@@ -24,7 +24,7 @@ start_link(DbName, JsonMode) ->
 %%                     {error, Reason}
 %% @end
 %%--------------------------------------------------------------------
-init([DbName, JsonMode]) ->
+init([]) ->
     RestartStrategy = one_for_all,
     MaxRestarts = 1000,
     MaxSecondsBetweenRestarts = 3600,
@@ -35,13 +35,10 @@ init([DbName, JsonMode]) ->
     Shutdown = 2000,
     Type = worker,
 
-    Daemon = {mc_daemon, {mc_daemon, start_link, [DbName, JsonMode]},
-              Restart, Shutdown, Type, [mc_daemon]},
-
-    TcpListener = {mc_tcp_listener, {mc_tcp_listener, start_link, [11213, mc_daemon]},
-                   Restart, Shutdown, Type, [mc_tcp_listener, mc_daemon]},
+    TcpListener = {mc_tcp_listener, {mc_tcp_listener, start_link, [11213]},
+                   Restart, Shutdown, Type, [mc_tcp_listener]},
 
     ConnSup = {mc_conn_sup, {mc_conn_sup, start_link, []},
                Restart, Shutdown, supervisor, dynamic},
 
-    {ok, {SupFlags, [Daemon, TcpListener, ConnSup]}}.
+    {ok, {SupFlags, [TcpListener, ConnSup]}}.

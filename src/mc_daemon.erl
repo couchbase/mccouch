@@ -3,7 +3,7 @@
 -behaviour(gen_fsm).
 
 %% API
--export([start_link/2]).
+-export([start_link/0]).
 
 %% gen_fsm callbacks
 -export([init/1, handle_event/3,
@@ -22,15 +22,14 @@
 -include("couch_db.hrl").
 -include("mc_constants.hrl").
 
--record(state, {db, json_mode, setqs=0, terminal_opaque=0}).
+-record(state, {db, json_mode=true, setqs=0, terminal_opaque=0}).
 
-start_link(DbName, JsonMode) ->
-    gen_fsm:start_link({local, ?SERVER}, ?MODULE, [DbName, JsonMode], []).
+start_link() ->
+    gen_fsm:start_link(?MODULE, [], []).
 
-init([DbName, JsonMode]) ->
-    ?LOG_INFO("MC daemon: starting: json_mode=~p.", [JsonMode]),
-    {ok, processing,
-     #state{db=list_to_binary(DbName), json_mode=JsonMode}}.
+init([]) ->
+    DbName = <<"default">>,
+    {ok, processing, #state{db=DbName}}.
 
 db_name(VBucket, State)->
     iolist_to_binary([State#state.db, $/, integer_to_list(VBucket)]).
@@ -60,6 +59,7 @@ handle_set_call(Db, Key, Flags, Expiration, Value, JsonMode) ->
     #mc_response{cas=NewCas}.
 
 handle_setq_call(VBucket, Key, Flags, Expiration, Value, _CAS, Opaque, Socket, State) ->
+    Me = self(),
     spawn_link(fun() ->
                       with_open_db(fun(Db) ->
                                            Res = case catch(mc_couch_kv:set(Db, Key,
@@ -75,10 +75,10 @@ handle_setq_call(VBucket, Key, Flags, Expiration, Value, _CAS, Opaque, Socket, S
                                                          #mc_response{status=?EINTERNAL,
                                                                       body=Message}
                                                  end,
-                                           gen_fsm:send_event(?MODULE, {setq_complete,
-                                                                        Opaque, %% opaque
-                                                                        Socket,
-                                                                        Res})
+                                           gen_fsm:send_event(Me, {setq_complete,
+                                                                   Opaque, %% opaque
+                                                                   Socket,
+                                                                   Res})
                                    end, VBucket, State)
               end),
     State#state{setqs=State#state.setqs + 1}.
@@ -126,7 +126,8 @@ processing({?SELECT_BUCKET, _, _, _, _, _}, _From, State) ->
     {reply, #mc_response{status=?EINVAL}, processing, State};
 processing({?SET_VBUCKET_STATE, VBucket, <<VBState:32>>, <<>>, <<>>, 0}, _From, State) ->
     mc_couch_vbucket:handle_set_state(VBucket, VBState, State);
-processing({?SET_VBUCKET_STATE, _, _, _, _, _}, _From, State) ->
+processing({?SET_VBUCKET_STATE, _, _, _, _, _} = Msg, _From, State) ->
+    ?LOG_INFO("Error handling set vbucket state: ~p.", [Msg]),
     {reply, #mc_response{status=?EINVAL}, processing, State};
 processing({?DELETE_VBUCKET, VBucket, <<>>, <<>>, <<>>, 0}, _From, State) ->
     {reply, mc_couch_vbucket:handle_delete(VBucket, State), processing, State};
