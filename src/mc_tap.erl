@@ -20,6 +20,7 @@ run(State, Opaque, Socket, <<Flags:32>>, <<>>) ->
                         terminate_tap_stream(Socket, Opaque, 0)
                end);
 run(State, Opaque, Socket, <<Flags:32>>, <<1:16, VBucketId:16>>) ->
+    true = lists:member(list_vbuckets, parse_tap_flags(Flags)),
     spawn_link(fun() -> process_tap_stream(mc_daemon:db_prefix(State), Opaque,
                                            VBucketId, parse_tap_flags(Flags), Socket),
                         terminate_tap_stream(Socket, Opaque, VBucketId)
