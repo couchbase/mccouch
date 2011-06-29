@@ -47,20 +47,16 @@ process_tap_stream(BaseDbName, Opaque, VBucketId, Socket) ->
     DbName = lists:flatten(io_lib:format("~s/~p", [BaseDbName, VBucketId])),
     {ok, Db} = couch_db:open(list_to_binary(DbName), []),
 
-    AdapterFun = fun(#full_doc_info{id=Id}=FullDocInfo, _Offset, Acc) ->
-                         case couch_doc:to_doc_info(FullDocInfo) of
-                             #doc_info{revs=[#rev_info{deleted=false}|_]} = _DocInfo ->
-                                 {ok, Flags, Expiration, Cas, Data} = mc_couch_kv:get(Db, Id),
-                                 emit_tap_doc(Socket, Opaque, VBucketId, Id,
-                                              Flags, Expiration, Cas, Data),
-                                 {ok, Acc};
-                             #doc_info{revs=[#rev_info{deleted=true}|_]} ->
-                                 {ok, Acc}
-                         end
-                 end,
-    {ok, _LastOffset, _FoldResult} = couch_db:enum_docs(Db,
-                                                        AdapterFun, fold_thing,
-                                                        []),
+    F = fun(#doc_info{revs=[#rev_info{deleted=true}|_]}, Acc) ->
+                {ok, Acc}; %% Ignore deleted docs
+           (#doc_info{id=Id}, Acc) ->
+                {ok, Flags, Expiration, Cas, Data} = mc_couch_kv:get(Db, Id),
+                emit_tap_doc(Socket, Opaque, VBucketId, Id,
+                             Flags, Expiration, Cas, Data),
+                {ok, Acc}
+        end,
+
+    {ok, finished} = couch_db:changes_since(Db, main_only, 0, F, finished),
 
     couch_db:close(Db).
 
