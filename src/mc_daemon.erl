@@ -86,6 +86,22 @@ handle_setq_call(VBucket, Key, Flags, Expiration, Value, _CAS, Opaque, Socket, S
                   end,
                   VBucket, Opaque, Socket, State).
 
+handle_delq_call(VBucket, Key, _CAS, Opaque, Socket, State) ->
+    do_batch_item(?DELETEQ,
+                  fun(Db) ->
+                          case catch(mc_couch_kv:delete(Db, Key)) of
+                              ok ->
+                                  #mc_response{};
+                              not_found ->
+                                  #mc_response{status=?KEY_ENOENT};
+                              Error ->
+                                  Message = io_lib:format("~p", [Error]),
+                                  #mc_response{status=?EINTERNAL,
+                                               body=Message}
+                          end
+                  end,
+                  VBucket, Opaque, Socket, State).
+
 handle_delete_call(Db, Key) ->
     case mc_couch_kv:delete(Db, Key) of
         ok -> #mc_response{};
@@ -160,6 +176,9 @@ processing({?SETQ, VBucket, <<Flags:32, Expiration:32>>, Key, Value,
              CAS, Socket, Opaque}, State) ->
     {next_state, batching, handle_setq_call(VBucket, Key, Flags, Expiration, Value,
                                             CAS, Opaque, Socket, State)};
+processing({?DELETEQ, VBucket, <<>>, Key, <<>>,
+             CAS, Socket, Opaque}, State) ->
+    {next_state, batching, handle_delq_call(VBucket, Key, CAS, Opaque, Socket, State)};
 processing(Msg, _State) ->
     ?LOG_INFO("Got unknown thing in processing/2: ~p", [Msg]),
     exit("WTF").
@@ -172,6 +191,9 @@ batching({?SETQ, VBucket, <<Flags:32, Expiration:32>>, Key, Value,
              CAS, Socket, Opaque}, State) ->
     {next_state, batching, handle_setq_call(VBucket, Key, Flags, Expiration, Value,
                                             CAS, Opaque, Socket, State)};
+batching({?DELETEQ, VBucket, <<>>, Key, <<>>,
+             CAS, Socket, Opaque}, State) ->
+    {next_state, batching, handle_delq_call(VBucket, Key, CAS, Opaque, Socket, State)};
 batching({item_complete, Cmd, Opaque, Socket, Res}, State) ->
     respond_if_fail(Socket, Cmd, Opaque, Res),
     {next_state, batching, State#state{batch_ops=State#state.batch_ops - 1}};
