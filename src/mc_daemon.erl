@@ -22,7 +22,7 @@
 -include("couch_db.hrl").
 -include("mc_constants.hrl").
 
--record(state, {db, json_mode=true, setqs=0, terminal_opaque=0}).
+-record(state, {db, json_mode=true, batch_ops=0, terminal_opaque=0}).
 
 start_link() ->
     gen_fsm:start_link(?MODULE, [], []).
@@ -58,30 +58,33 @@ handle_set_call(Db, Key, Flags, Expiration, Value, JsonMode) ->
                              JsonMode),
     #mc_response{cas=NewCas}.
 
-handle_setq_call(VBucket, Key, Flags, Expiration, Value, _CAS, Opaque, Socket, State) ->
+%% Fun receives an open Db
+do_batch_item(Cmd, Fun, VBucket, Opaque, Socket, State) ->
     Me = self(),
     spawn_link(fun() ->
-                      with_open_db(fun(Db) ->
-                                           Res = case catch(mc_couch_kv:set(Db, Key,
-                                                                            Flags,
-                                                                            Expiration,
-                                                                            Value,
-                                                                            State#state.json_mode)) of
-                                                     CAS when is_integer(CAS) ->
-                                                         #mc_response{cas=CAS};
-                                                     Error ->
-                                                         ?LOG_INFO("Error persisting=~p.", [Error]),
-                                                         Message = io_lib:format("~p", [Error]),
-                                                         #mc_response{status=?EINTERNAL,
-                                                                      body=Message}
-                                                 end,
-                                           gen_fsm:send_event(Me, {setq_complete,
-                                                                   Opaque, %% opaque
-                                                                   Socket,
-                                                                   Res})
-                                   end, VBucket, State)
-              end),
-    State#state{setqs=State#state.setqs + 1}.
+                       gen_fsm:send_event(Me, {item_complete, Cmd, Opaque, Socket,
+                                               with_open_db(Fun, VBucket, State)})
+               end),
+    State#state{batch_ops=State#state.batch_ops + 1}.
+
+handle_setq_call(VBucket, Key, Flags, Expiration, Value, _CAS, Opaque, Socket, State) ->
+    do_batch_item(?SETQ,
+                  fun(Db) ->
+                          case catch(mc_couch_kv:set(Db, Key,
+                                                     Flags,
+                                                     Expiration,
+                                                     Value,
+                                                     State#state.json_mode)) of
+                              CAS when is_integer(CAS) ->
+                                  #mc_response{cas=CAS};
+                              Error ->
+                                  ?LOG_INFO("Error persisting=~p.", [Error]),
+                                  Message = io_lib:format("~p", [Error]),
+                                  #mc_response{status=?EINTERNAL,
+                                               body=Message}
+                          end
+                  end,
+                  VBucket, Opaque, Socket, State).
 
 handle_delete_call(Db, Key) ->
     case mc_couch_kv:delete(Db, Key) of
@@ -169,8 +172,9 @@ batching({?SETQ, VBucket, <<Flags:32, Expiration:32>>, Key, Value,
              CAS, Socket, Opaque}, State) ->
     {next_state, batching, handle_setq_call(VBucket, Key, Flags, Expiration, Value,
                                             CAS, Opaque, Socket, State)};
-batching({setq_complete, _Opaque, _Socket, _Status}, State) ->
-    {next_state, batching, State#state{setqs=State#state.setqs - 1}};
+batching({item_complete, Cmd, Opaque, Socket, Res}, State) ->
+    respond_if_fail(Socket, Cmd, Opaque, Res),
+    {next_state, batching, State#state{batch_ops=State#state.batch_ops - 1}};
 batching({?NOOP, _Socket, Opaque}, State) ->
     {next_state, committing, State#state{terminal_opaque=Opaque}};
 batching(Msg, _State) ->
@@ -186,13 +190,13 @@ respond_if_fail(_Socket, _Op, _Opaque, _Res=#mc_response{status=?SUCCESS}) ->
 respond_if_fail(Socket, Op, Opaque, Res) ->
     mc_connection:respond(Socket, Op, Opaque, Res).
 
-committing({setq_complete, Opaque, Socket, Res}, State=#state{setqs=1}) ->
-    respond_if_fail(Socket, ?SETQ, Opaque, Res),
+committing({item_complete, Cmd, Opaque, Socket, Res}, State=#state{batch_ops=1}) ->
+    respond_if_fail(Socket, Cmd, Opaque, Res),
     mc_connection:respond(Socket, ?NOOP, State#state.terminal_opaque, #mc_response{}),
-    {next_state, processing, State#state{setqs=0}};
-committing({setq_complete, Opaque, Socket, Res}, State) ->
-    respond_if_fail(Socket, ?SETQ, Opaque, Res),
-    {next_state, committing, State#state{setqs=State#state.setqs - 1}};
+    {next_state, processing, State#state{batch_ops=0}};
+committing({item_complete, Cmd, Opaque, Socket, Res}, State) ->
+    respond_if_fail(Socket, Cmd, Opaque, Res),
+    {next_state, committing, State#state{batch_ops=State#state.batch_ops - 1}};
 committing(Msg, _State) ->
     ?LOG_INFO("Got unknown thing in committing/2: ~p", [Msg]),
     exit("WTF").
