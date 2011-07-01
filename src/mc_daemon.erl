@@ -37,10 +37,30 @@ db_name(VBucket, State)->
 db_prefix(State) -> State#state.db.
 
 with_open_db(F, VBucket, State) ->
-    {ok, Db} = couch_db:open(db_name(VBucket, State), []),
-    NewState = F(Db),
-    couch_db:close(Db),
-    NewState.
+    case couch_db:open(db_name(VBucket, State), []) of
+        {ok, Db} ->
+            try
+                F(Db)
+            after
+                couch_db:close(Db)
+            end;
+        Other ->
+            ?LOG_ERROR("MC daemon: Error opening vb ~p in ~p: ~p",
+                       [VBucket, db_prefix(State), Other]),
+            throw({open_db_error, db_prefix(State), VBucket, Other})
+    end.
+
+with_open_db(F, VBucket, State, Def) ->
+    case catch(with_open_db(F, VBucket, State)) of
+        {open_db_error, _Prefix, VBucket, _Other} -> Def;
+        X -> X
+    end.
+
+with_open_db_or_einval(F, VBucket, State) ->
+    with_open_db(F, VBucket, State,
+                 {reply,
+                  #mc_response{status=?EINVAL, body= <<"Error opening DB">>},
+                  processing, State}).
 
 handle_get_call(Db, Key) ->
     case mc_couch_kv:get(Db, Key) of
@@ -116,22 +136,22 @@ delete_db(Key) ->
                   end, lists:seq(0, 1023)).
 
 processing({?GET, VBucket, <<>>, Key, <<>>, _CAS}, _From, State) ->
-    with_open_db(fun(Db) -> {reply, handle_get_call(Db, Key), processing, State} end,
-                 VBucket, State);
+    with_open_db_or_einval(fun(Db) -> {reply, handle_get_call(Db, Key), processing, State} end,
+                           VBucket, State);
 processing({?GET, _, _, _, _, _}, _From, State) ->
     {reply, #mc_response{status=?EINVAL}, processing, State};
 processing({?SET, VBucket, <<Flags:32, Expiration:32>>, Key, Value, _CAS},
            _From, State) ->
-    with_open_db(fun(Db) -> {reply, handle_set_call(Db, Key, Flags,
-                                                    Expiration, Value,
-                                                    State#state.json_mode),
+    with_open_db_or_einval(fun(Db) -> {reply, handle_set_call(Db, Key, Flags,
+                                                              Expiration, Value,
+                                                              State#state.json_mode),
                              processing, State}
                  end, VBucket, State);
 processing({?SET, _, _, _, _, _}, _From, State) ->
     {reply, #mc_response{status=?EINVAL}, processing, State};
 processing({?DELETE, VBucket, <<>>, Key, <<>>, _CAS}, _From, State) ->
-    with_open_db(fun(Db) -> {reply, handle_delete_call(Db, Key), processing, State} end,
-                 VBucket, State);
+    with_open_db_or_einval(fun(Db) -> {reply, handle_delete_call(Db, Key), processing, State} end,
+                           VBucket, State);
 processing({?DELETE, _, _, _, _, _}, _From, State) ->
     {reply, #mc_response{status=?EINVAL}, processing, State};
 processing({?DELETE_BUCKET, _VBucket, <<>>, Key, <<>>, 0}, _From, State) ->
