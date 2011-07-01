@@ -53,7 +53,7 @@ json_decode(V) ->
 %% ok, Flags, Expiration, Cas, Data
 -spec get(_, binary()) -> {ok, integer(), integer(), integer(), binary()} | not_found.
 get(Db, Key) ->
-    case couch_db:open_doc(Db, Key, []) of
+    case couch_db:open_doc_int(Db, Key, []) of
         {ok, Doc} -> grok_doc(Doc);
         _ -> not_found
     end.
