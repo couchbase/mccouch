@@ -66,10 +66,12 @@ process_tap_stream(BaseDbName, Opaque, VBucketId, TapFlags, Socket) ->
 
     F = fun(#doc_info{revs=[#rev_info{deleted=true}|_]}, Acc) ->
                 {ok, Acc}; %% Ignore deleted docs
-           (#doc_info{id=Id}, Acc) ->
+           (#doc_info{id=Id} = DocInfo, Acc) ->
                 {ok, Flags, Expiration, Cas, Data} = case KeysOnly of
                                                          true -> {ok, 0, 0, 0, <<>>};
-                                                         _ -> mc_couch_kv:get(Db, Id)
+                                                         _ ->
+                                                             {ok, Doc} = couch_db:open_doc_int(Db, DocInfo, []),
+                                                             mc_couch_kv:grok_doc(Doc)
                                                      end,
                 emit_tap_doc(Socket, OutFlags, Opaque, VBucketId, Id,
                              Flags, Expiration, Cas, Data),

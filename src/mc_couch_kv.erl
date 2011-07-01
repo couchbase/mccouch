@@ -2,7 +2,7 @@
 
 -include("couch_db.hrl").
 
--export([get/2, set/6, delete/2]).
+-export([get/2, grok_doc/1, set/6, delete/2]).
 -export([json_encode/1, json_decode/1]).
 
 dig_out_attachment(Doc, FileName) ->
@@ -54,20 +54,24 @@ json_decode(V) ->
 -spec get(_, binary()) -> {ok, integer(), integer(), integer(), binary()} | not_found.
 get(Db, Key) ->
     case couch_db:open_doc(Db, Key, []) of
-        {ok, Doc} ->
-            {EJson} = couch_doc:to_json_obj(Doc, []),
-            Flags = proplists:get_value(<<"$flags">>, EJson, 0),
-            Expiration = proplists:get_value(<<"$expiration">>, EJson, 0),
-
-            case dig_out_attachment(Doc, <<"value">>) of
-                {ok, AttData} ->
-                    {ok, Flags, Expiration, 0, AttData};
-                _ ->
-                    Encoded = iolist_to_binary(json_encode(
-                                                 {cleanup(EJson)})),
-                    {ok, Flags, Expiration, 0, Encoded}
-            end;
+        {ok, Doc} -> grok_doc(Doc);
         _ -> not_found
+    end.
+
+%% ok, Flags, Expiration, Cas, Data
+-spec grok_doc(#doc{}) -> {ok, integer(), integer(), integer(), binary()}.
+grok_doc(Doc) ->
+    {EJson} = couch_doc:to_json_obj(Doc, []),
+    Flags = proplists:get_value(<<"$flags">>, EJson, 0),
+    Expiration = proplists:get_value(<<"$expiration">>, EJson, 0),
+
+    case dig_out_attachment(Doc, <<"value">>) of
+        {ok, AttData} ->
+            {ok, Flags, Expiration, 0, AttData};
+        _ ->
+            Encoded = iolist_to_binary(json_encode(
+                                         {cleanup(EJson)})),
+            {ok, Flags, Expiration, 0, Encoded}
     end.
 
 mk_att_doc(Key, Flags, Expiration, Value, Reason) ->
