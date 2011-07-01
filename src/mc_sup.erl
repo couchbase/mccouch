@@ -25,7 +25,7 @@ start_link(PortNum) ->
 %% @end
 %%--------------------------------------------------------------------
 init([PortNum]) ->
-    RestartStrategy = one_for_all,
+    RestartStrategy = one_for_one,
     MaxRestarts = 1000,
     MaxSecondsBetweenRestarts = 3600,
 
