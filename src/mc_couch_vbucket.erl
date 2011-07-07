@@ -41,22 +41,38 @@ handle_delete(VBucket, State) ->
     couch_server:delete(DbName, []),
     #mc_response{}.
 
+
+vbucket_from_name(DBPrefix, Len, Name, State) ->
+    case catch binary:split(Name, <<$/>>, [{scope, {Len,size(Name)-Len}}]) of
+        [DBPrefix, VB] ->
+            VBStr = binary_to_list(VB),
+            case catch list_to_integer(VBStr) of
+                VBInt when is_integer(VBInt) ->
+                    StatVal = get_state(VBInt, State),
+                    {VBInt, StatVal};
+                _ ->
+                    invalid_vbucket
+            end;
+         _ ->
+             invalid_vbucket
+    end.
+
 list_vbuckets(State) ->
+
     {ok, DBs} = couch_server:all_databases(),
     DBPrefix = mc_daemon:db_prefix(State),
     Len = size(DBPrefix),
-    lists:filter(fun is_tuple/1,
-                 lists:map(fun(DBName) ->
-                                   case (catch binary:split(DBName, <<$/>>,
-                                                            [{scope, {Len,size(DBName)-Len}}])) of
-                                       [DBPrefix, VB] ->
-                                           VBStr = binary_to_list(VB),
-                                           VBInt = list_to_integer(VBStr),
-                                           StatVal = get_state(VBInt, State),
-                                           {VBInt, StatVal};
-                                       _ -> ignore
-                                   end
-                           end, DBs)).
+
+    VBuckets = fun(Name, Acc) ->
+        case vbucket_from_name(DBPrefix, Len, Name, State) of
+            {Int, Stat} ->
+                [{Int, Stat} | Acc];
+            invalid_vbucket ->
+                Acc
+        end
+    end,
+
+    lists:foldl(VBuckets, [], DBs).
 
 handle_stats(Socket, Opaque, State) ->
     lists:foreach(fun({VBInt, V}) ->
