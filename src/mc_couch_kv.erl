@@ -3,7 +3,6 @@
 -include("couch_db.hrl").
 
 -export([get/2, grok_doc/1, set/6, delete/2]).
--export([json_encode/1, json_decode/1]).
 
 dig_out_attachment(Doc, FileName) ->
     case [A || A <- Doc#doc.atts, A#att.name == FileName] of
@@ -34,22 +33,6 @@ addRev(Db, #doc{id = Key} = Doc) ->
             Doc
     end.
 
-json_encode(V) ->
-    Handler =
-    fun({L}) when is_list(L) ->
-        {struct,L};
-    (Bad) ->
-        exit({json_encode, {bad_term, Bad}})
-    end,
-    (mochijson2:encoder([{handler, Handler}]))(V).
-
-json_decode(V) ->
-    try (mochijson2:decoder([{object_hook, fun({struct,L}) -> {L} end}]))(V)
-    catch
-        _Type:_Error ->
-            throw({invalid_json, V})
-    end.
-
 %% ok, Flags, Expiration, Cas, Data
 -spec get(_, binary()) -> {ok, integer(), integer(), integer(), binary()} | not_found.
 get(Db, Key) ->
@@ -69,7 +52,7 @@ grok_doc(Doc) ->
         {ok, AttData} ->
             {ok, Flags, Expiration, 0, AttData};
         _ ->
-            Encoded = iolist_to_binary(json_encode(
+            Encoded = iolist_to_binary(?JSON_ENCODE(
                                          {cleanup(EJson)})),
             {ok, Flags, Expiration, 0, Encoded}
     end.
@@ -94,7 +77,7 @@ validate([{<<$$:8,_/binary>>, _Val}|_Tl]) -> throw(invalid_key);
 validate([_|Tl]) -> validate(Tl).
 
 parse_json(Value) ->
-    case json_decode(Value) of
+    case ?JSON_DECODE(Value) of
         {J} ->
             validate(J),
             J;
