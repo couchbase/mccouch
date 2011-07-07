@@ -82,8 +82,11 @@ handle_set_call(Db, Key, Flags, Expiration, Value, JsonMode) ->
 do_batch_item(Cmd, Fun, VBucket, Opaque, Socket, State) ->
     Me = self(),
     spawn_link(fun() ->
-                       gen_fsm:send_event(Me, {item_complete, Cmd, Opaque, Socket,
-                                               with_open_db(Fun, VBucket, State)})
+                       gen_fsm:send_event(Me,
+                                          {item_complete, Cmd, Opaque, Socket,
+                                           with_open_db(Fun, VBucket, State,
+                                                        #mc_response{status= ?EINVAL,
+                                                                     body= <<"Error opening DB">>})})
                end),
     State#state{batch_ops=State#state.batch_ops + 1}.
 
