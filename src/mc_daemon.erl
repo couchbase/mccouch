@@ -22,7 +22,7 @@
 -include("couch_db.hrl").
 -include("mc_constants.hrl").
 
--record(state, {db, json_mode=true, batch_ops=0, terminal_opaque=0}).
+-record(state, {db, json_mode=true, batch_ops=0, terminal_opaque=0, errors=[]}).
 
 start_link() ->
     gen_fsm:start_link(?MODULE, [], []).
@@ -217,9 +217,9 @@ batching({?SETQ, VBucket, <<Flags:32, Expiration:32>>, Key, Value,
 batching({?DELETEQ, VBucket, <<>>, Key, <<>>,
              CAS, Socket, Opaque}, State) ->
     {next_state, batching, handle_delq_call(VBucket, Key, CAS, Opaque, Socket, State)};
-batching({item_complete, Cmd, Opaque, Socket, Res}, State) ->
-    respond_if_fail(Socket, Cmd, Opaque, Res),
-    {next_state, batching, State#state{batch_ops=State#state.batch_ops - 1}};
+batching({item_complete, Cmd, Opaque, _Socket, Res}, State) ->
+    State2 = add_failure_state(State, Cmd, Opaque, Res),
+    {next_state, batching, State2#state{batch_ops=State2#state.batch_ops - 1}};
 batching({?NOOP, _Socket, Opaque}, State) ->
     {next_state, committing, State#state{terminal_opaque=Opaque}};
 batching(Msg, _State) ->
@@ -230,18 +230,25 @@ batching(Msg, _State) ->
 %% Committing a transaction
 %%
 
-respond_if_fail(_Socket, _Op, _Opaque, _Res=#mc_response{status=?SUCCESS}) ->
-    ok;
-respond_if_fail(Socket, Op, Opaque, Res) ->
-    mc_connection:respond(Socket, Op, Opaque, Res).
+add_failure_state(State, _Op, _Opaque, _Res=#mc_response{status=?SUCCESS}) ->
+    State;
+add_failure_state(State, Op, Opaque, Res) ->
+    State#state{errors=[{Opaque, Op, Res}|State#state.errors]}.
+
+deliver_errors(Socket, Errors) ->
+    lists:foreach(fun({Opaque, Op, Res}) ->
+                          mc_connection:respond(Socket, Op, Opaque, Res)
+                  end,
+                  lists:sort(Errors)).
 
 committing({item_complete, Cmd, Opaque, Socket, Res}, State=#state{batch_ops=1}) ->
-    respond_if_fail(Socket, Cmd, Opaque, Res),
-    mc_connection:respond(Socket, ?NOOP, State#state.terminal_opaque, #mc_response{}),
-    {next_state, processing, State#state{batch_ops=0}};
-committing({item_complete, Cmd, Opaque, Socket, Res}, State) ->
-    respond_if_fail(Socket, Cmd, Opaque, Res),
-    {next_state, committing, State#state{batch_ops=State#state.batch_ops - 1}};
+    State2 = add_failure_state(State, Cmd, Opaque, Res),
+    deliver_errors(Socket, State2#state.errors),
+    mc_connection:respond(Socket, ?NOOP, State2#state.terminal_opaque, #mc_response{}),
+    {next_state, processing, State2#state{batch_ops=0, errors=[]}};
+committing({item_complete, Cmd, Opaque, _Socket, Res}, State) ->
+    State2 = add_failure_state(State, Cmd, Opaque, Res),
+    {next_state, committing, State2#state{batch_ops=State2#state.batch_ops - 1}};
 committing(Msg, _State) ->
     ?LOG_INFO("Got unknown thing in committing/2: ~p", [Msg]),
     exit("WTF").
