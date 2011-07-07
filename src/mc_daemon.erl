@@ -220,6 +220,9 @@ batching({?DELETEQ, VBucket, <<>>, Key, <<>>,
 batching({item_complete, Cmd, Opaque, _Socket, Res}, State) ->
     State2 = add_failure_state(State, Cmd, Opaque, Res),
     {next_state, batching, State2#state{batch_ops=State2#state.batch_ops - 1}};
+batching({?NOOP, Socket, Opaque}, State=#state{batch_ops=0}) ->
+    ?LOG_INFO("NOOP in idle batch.  Proceeding to processing.", []),
+    complete_batch(Socket, State#state{terminal_opaque=Opaque});
 batching({?NOOP, _Socket, Opaque}, State) ->
     {next_state, committing, State#state{terminal_opaque=Opaque}};
 batching(Msg, _State) ->
@@ -241,11 +244,14 @@ deliver_errors(Socket, Errors) ->
                   end,
                   lists:sort(Errors)).
 
+complete_batch(Socket, State) ->
+    deliver_errors(Socket, State#state.errors),
+    mc_connection:respond(Socket, ?NOOP, State#state.terminal_opaque, #mc_response{}),
+    {next_state, processing, State#state{batch_ops=0, errors=[]}}.
+
 committing({item_complete, Cmd, Opaque, Socket, Res}, State=#state{batch_ops=1}) ->
     State2 = add_failure_state(State, Cmd, Opaque, Res),
-    deliver_errors(Socket, State2#state.errors),
-    mc_connection:respond(Socket, ?NOOP, State2#state.terminal_opaque, #mc_response{}),
-    {next_state, processing, State2#state{batch_ops=0, errors=[]}};
+    complete_batch(Socket, State2);
 committing({item_complete, Cmd, Opaque, _Socket, Res}, State) ->
     State2 = add_failure_state(State, Cmd, Opaque, Res),
     {next_state, committing, State2#state{batch_ops=State2#state.batch_ops - 1}};
