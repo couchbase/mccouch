@@ -166,11 +166,6 @@ processing({?SELECT_BUCKET, _VBucket, <<>>, Name, <<>>, 0}, _From, State) ->
     {reply, #mc_response{}, processing, State#state{db=Name}};
 processing({?SELECT_BUCKET, _, _, _, _, _}, _From, State) ->
     {reply, #mc_response{status=?EINVAL}, processing, State};
-processing({?SET_VBUCKET_STATE, VBucket, <<VBState:32>>, <<>>, <<>>, 0}, _From, State) ->
-    mc_couch_vbucket:handle_set_state(VBucket, VBState, State);
-processing({?SET_VBUCKET_STATE, _, _, _, _, _} = Msg, _From, State) ->
-    ?LOG_INFO("Error handling set vbucket state: ~p.", [Msg]),
-    {reply, #mc_response{status=?EINVAL}, processing, State};
 processing({?DELETE_VBUCKET, VBucket, <<>>, <<>>, <<>>, 0}, _From, State) ->
     {reply, mc_couch_vbucket:handle_delete(VBucket, State), processing, State};
 processing({?DELETE_VBUCKET, _, _, _, _, _}, _From, State) ->
@@ -264,6 +259,12 @@ committing(Msg, _State) ->
 handle_event(_Event, StateName, State) ->
     {next_state, StateName, State}.
 
+handle_sync_event({?SET_VBUCKET_STATE, VBucket, <<VBState:32>>, <<>>, <<>>, 0},
+                  _From, _StateName, State) ->
+    mc_couch_vbucket:handle_set_state(VBucket, VBState, State);
+handle_sync_event({?SET_VBUCKET_STATE, _, _, _, _, _} = Msg, _From, _StateName, State) ->
+    ?LOG_INFO("Error handling set vbucket state: ~p.", [Msg]),
+    {reply, #mc_response{status=?EINVAL}, processing, State};
 handle_sync_event(_Event, _From, StateName, State) ->
     Reply = ok,
     {reply, Reply, StateName, State}.
