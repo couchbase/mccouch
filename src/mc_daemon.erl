@@ -131,12 +131,13 @@ handle_delete_call(Db, Key) ->
         not_found -> #mc_response{status=1, body="Not found"}
     end.
 
-delete_db(Key) ->
-    lists:foreach(fun(N) ->
-                          DbName = lists:flatten(io_lib:format("~s/~p",
+delete_db(State, Key) ->
+    lists:map(fun({N, _VBucketState} = VBucketAndState) ->
+                      DbName = lists:flatten(io_lib:format("~s/~p",
                                                                [Key, N])),
-                          couch_server:delete(list_to_binary(DbName), [])
-                  end, lists:seq(0, 1023)).
+                      couch_server:delete(list_to_binary(DbName), []),
+                      VBucketAndState
+              end, mc_couch_vbucket:list_vbuckets(State)).
 
 processing({?GET, VBucket, <<>>, Key, <<>>, _CAS}, _From, State) ->
     with_open_db_or_einval(fun(Db) -> {reply, handle_get_call(Db, Key), processing, State} end,
@@ -158,7 +159,7 @@ processing({?DELETE, VBucket, <<>>, Key, <<>>, _CAS}, _From, State) ->
 processing({?DELETE, _, _, _, _, _}, _From, State) ->
     {reply, #mc_response{status=?EINVAL}, processing, State};
 processing({?DELETE_BUCKET, _VBucket, <<>>, Key, <<>>, 0}, _From, State) ->
-    delete_db(Key),
+    delete_db(State, Key),
     {reply, #mc_response{body="Done!"}, processing, State};
 processing({?DELETE_BUCKET, _, _, _, _, _}, _From, State) ->
     {reply, #mc_response{status=?EINVAL}, processing, State};
@@ -170,6 +171,12 @@ processing({?DELETE_VBUCKET, VBucket, <<>>, <<>>, <<>>, 0}, _From, State) ->
     {reply, mc_couch_vbucket:handle_delete(VBucket, State), processing, State};
 processing({?DELETE_VBUCKET, _, _, _, _, _}, _From, State) ->
     {reply, #mc_response{status=?EINVAL}, processing, State};
+processing({?FLUSH, _, _, _, _, _}, _From, State) ->
+    ?LOG_INFO("FLUSHING ALL THE THINGS!", []),
+    lists:foreach(fun({VB, VBState}) ->
+                          mc_couch_vbucket:set_vbucket(VB, VBState, State)
+                  end, delete_db(State, State#state.db)),
+    {reply, #mc_response{}, processing, State};
 processing({OpCode, VBucket, Header, Key, Body, CAS}, _From, State) ->
     ?LOG_INFO("MC daemon: got unhandled call: ~p/~p/~p/~p/~p/~p.",
                [OpCode, VBucket, Header, Key, Body, CAS]),
