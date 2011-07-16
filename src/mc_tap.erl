@@ -66,6 +66,9 @@ process_tap_stream(BaseDbName, Opaque, VBucketId, TapFlags, Socket) ->
 
     F = fun(#doc_info{revs=[#rev_info{deleted=true}|_]}, Acc) ->
                 {ok, Acc}; %% Ignore deleted docs
+           (#doc_info{id = <<"_design/",_/binary>>}, Acc) ->
+                %% Ignore design documents
+                {ok, Acc};
            (#doc_info{id=Id} = DocInfo, Acc) ->
                 {ok, Flags, Expiration, Cas, Data} = case KeysOnly of
                                                          true -> {ok, 0, 0, 0, <<>>};
