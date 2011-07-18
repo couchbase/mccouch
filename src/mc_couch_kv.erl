@@ -121,7 +121,7 @@ mk_doc(Key, Flags, Expiration, Value, WantJson) ->
 -spec set(_, binary(), integer(), integer(), binary(), boolean()) -> integer().
 set(Db, Key, Flags, Expiration, Value, JsonMode) ->
     Doc = addRev(Db, mk_doc(Key, Flags, Expiration, Value, JsonMode)),
-    couch_db:update_doc(Db, Doc, []),
+    couch_db:update_doc(Db, Doc, [optimistic]),
     0.
 
 -spec delete(_, binary()) -> ok|not_found.
@@ -131,6 +131,6 @@ delete(Db, Key) ->
         Doc ->
             not_found;
         Doc2 ->
-            {ok, _NewRev} = couch_db:update_doc(Db, Doc2, []),
+            {ok, _NewRev} = couch_db:update_doc(Db, Doc2, [optimistic]),
             ok
     end.
