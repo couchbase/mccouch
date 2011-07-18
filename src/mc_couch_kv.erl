@@ -76,12 +76,23 @@ validate([{<<$_:8,_/binary>>,_Val}|_Tl]) -> throw(invalid_key);
 validate([{<<$$:8,_/binary>>, _Val}|_Tl]) -> throw(invalid_key);
 validate([_|Tl]) -> validate(Tl).
 
+jsonish(<<"{", _/binary>>) -> true;
+jsonish(<<" ", _/binary>>) -> true;
+jsonish(<<"\r", _/binary>>) -> true;
+jsonish(<<"\n", _/binary>>) -> true;
+jsonish(_) -> false.
+
 parse_json(Value) ->
-    case ?JSON_DECODE(Value) of
-        {J} ->
-            validate(J),
-            J;
-        _ -> throw({invalid_json, Value})
+    case jsonish(Value) of
+        true ->
+            case ?JSON_DECODE(Value) of
+                {J} ->
+                    validate(J),
+                    J;
+                _ -> throw({invalid_json, Value})
+            end;
+        _ ->
+            throw({invalid_json, Value})
     end.
 
 mk_json_doc(Key, Flags, Expiration, Value) ->
