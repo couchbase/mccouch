@@ -35,10 +35,14 @@ init([PortNum]) ->
     Shutdown = 2000,
     Type = worker,
 
+    McEvents = {mc_couch_events,
+                {gen_event, start_link, [{local, mc_couch_events}]},
+                Restart, Shutdown, Type, []},
+
     TcpListener = {mc_tcp_listener, {mc_tcp_listener, start_link, [PortNum]},
                    Restart, Shutdown, Type, [mc_tcp_listener]},
 
     ConnSup = {mc_conn_sup, {mc_conn_sup, start_link, []},
                Restart, Shutdown, supervisor, dynamic},
 
-    {ok, {SupFlags, [TcpListener, ConnSup]}}.
+    {ok, {SupFlags, [McEvents, TcpListener, ConnSup]}}.
