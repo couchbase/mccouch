@@ -1,4 +1,6 @@
 *.beam
+*.tar.gz
 *~
 coverage
 erl_crash.dump
+tmp
