@@ -13,7 +13,6 @@ bin_size(undefined) -> 0;
 bin_size(IoList) -> iolist_size(IoList).
 
 xmit(_Socket, undefined) -> ok;
-xmit(Socket, List) when is_list(List) -> xmit(Socket, list_to_binary(List));
 xmit(Socket, Data) -> gen_tcp:send(Socket, Data).
 
 respond(Magic, Socket, OpCode, Opaque, Res) ->
