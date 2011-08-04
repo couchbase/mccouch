@@ -19,8 +19,4 @@ init([]) ->
             temporary, brutal_kill, worker, [mc_connection, mc_daemon]}]}}.
 
 start_connection(NS) ->
-    {ok, Pid} = supervisor:start_child(?MODULE, [NS]),
-    gen_tcp:controlling_process(NS, Pid),
-    %% Tell this mc_connection it's the controlling process and ready to go.
-    Pid ! go,
-    {ok, Pid}.
+    {ok, _Pid} = supervisor:start_child(?MODULE, [NS]).

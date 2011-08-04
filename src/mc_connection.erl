@@ -111,8 +111,6 @@ process_message(Socket, StorageServer, {ok, <<?REQ_MAGIC:8, OpCode:8, KeyLen:16,
     end.
 
 init(Socket) ->
-    %% The spawner will tell us when we are the controlling process.
-    receive go -> ok end,
     {ok, Handler} = mc_daemon:start_link(),
     loop(Socket, Handler).
 
