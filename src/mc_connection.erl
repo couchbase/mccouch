@@ -44,63 +44,63 @@ read_message(Socket, KeyLen, ExtraLen, BodyLen) ->
 
     {Extra, Key, Body}.
 
-process_message(Socket, StorageServer, {ok, <<?REQ_MAGIC:8, ?TAP_CONNECT:8, KeyLen:16,
-                                            ExtraLen:8, 0:8, _VBucket:16,
-                                            BodyLen:32,
-                                            Opaque:32,
-                                            CAS:64>>}) ->
+process_message(Socket, StorageServer, <<?REQ_MAGIC:8, ?TAP_CONNECT:8, KeyLen:16,
+                                         ExtraLen:8, 0:8, _VBucket:16,
+                                         BodyLen:32,
+                                         Opaque:32,
+                                         CAS:64>>) ->
 
     {Extra, Key, Body} = read_message(Socket, KeyLen, ExtraLen, BodyLen),
 
     % Hand the request off to the server.
     gen_fsm:send_event(StorageServer, {?TAP_CONNECT, Extra, Key, Body, CAS, Socket, Opaque});
-process_message(Socket, StorageServer, {ok, <<?REQ_MAGIC:8, ?STAT:8, KeyLen:16,
-                                            ExtraLen:8, 0:8, _VBucket:16,
-                                            BodyLen:32,
-                                            Opaque:32,
-                                            CAS:64>>}) ->
+process_message(Socket, StorageServer, <<?REQ_MAGIC:8, ?STAT:8, KeyLen:16,
+                                         ExtraLen:8, 0:8, _VBucket:16,
+                                         BodyLen:32,
+                                         Opaque:32,
+                                         CAS:64>>) ->
     error_logger:info_msg("Got a stat request for ~p.~n", [StorageServer]),
 
     {Extra, Key, Body} = read_message(Socket, KeyLen, ExtraLen, BodyLen),
 
     % Hand the request off to the server.
     gen_fsm:send_event(StorageServer, {?STAT, Extra, Key, Body, CAS, Socket, Opaque});
-process_message(Socket, StorageServer, {ok, <<?REQ_MAGIC:8, ?SETQ:8, KeyLen:16,
-                                            ExtraLen:8, 0:8, VBucket:16,
-                                            BodyLen:32,
-                                            Opaque:32,
-                                            CAS:64>>}) ->
+process_message(Socket, StorageServer, <<?REQ_MAGIC:8, ?SETQ:8, KeyLen:16,
+                                         ExtraLen:8, 0:8, VBucket:16,
+                                         BodyLen:32,
+                                         Opaque:32,
+                                         CAS:64>>) ->
     {Extra, Key, Body} = read_message(Socket, KeyLen, ExtraLen, BodyLen),
     gen_fsm:send_event(StorageServer, {?SETQ, VBucket, Extra, Key, Body, CAS, Socket, Opaque});
-process_message(Socket, StorageServer, {ok, <<?REQ_MAGIC:8, ?DELETEQ:8, KeyLen:16,
-                                            ExtraLen:8, 0:8, VBucket:16,
-                                            BodyLen:32,
-                                            Opaque:32,
-                                            CAS:64>>}) ->
+process_message(Socket, StorageServer, <<?REQ_MAGIC:8, ?DELETEQ:8, KeyLen:16,
+                                         ExtraLen:8, 0:8, VBucket:16,
+                                         BodyLen:32,
+                                         Opaque:32,
+                                         CAS:64>>) ->
     {Extra, Key, Body} = read_message(Socket, KeyLen, ExtraLen, BodyLen),
     gen_fsm:send_event(StorageServer, {?DELETEQ, VBucket, Extra, Key, Body, CAS, Socket, Opaque});
-process_message(Socket, StorageServer, {ok, <<?REQ_MAGIC:8, ?NOOP:8, KeyLen:16,
-                                            ExtraLen:8, 0:8, _VBucket:16,
-                                            BodyLen:32,
-                                            Opaque:32,
-                                            _CAS:64>>}) ->
+process_message(Socket, StorageServer, <<?REQ_MAGIC:8, ?NOOP:8, KeyLen:16,
+                                         ExtraLen:8, 0:8, _VBucket:16,
+                                         BodyLen:32,
+                                         Opaque:32,
+                                         _CAS:64>>) ->
     {_Extra, _Key, _Body} = read_message(Socket, KeyLen, ExtraLen, BodyLen),
     gen_fsm:send_event(StorageServer, {?NOOP, Socket, Opaque});
-process_message(Socket, StorageServer, {ok, <<?REQ_MAGIC:8, ?SET_VBUCKET_STATE:8,
-                                              KeyLen:16, ExtraLen:8, 0:8, VBucket:16,
-                                              BodyLen:32,
-                                              Opaque:32,
-                                              CAS:64>>}) ->
+process_message(Socket, StorageServer, <<?REQ_MAGIC:8, ?SET_VBUCKET_STATE:8,
+                                         KeyLen:16, ExtraLen:8, 0:8, VBucket:16,
+                                         BodyLen:32,
+                                         Opaque:32,
+                                         CAS:64>>) ->
     {Extra, Key, Body} = read_message(Socket, KeyLen, ExtraLen, BodyLen),
     respond(Socket, ?SET_VBUCKET_STATE, Opaque,
             gen_fsm:sync_send_all_state_event(StorageServer,
                                               {?SET_VBUCKET_STATE, VBucket, Extra, Key, Body, CAS},
                                             infinity));
-process_message(Socket, StorageServer, {ok, <<?REQ_MAGIC:8, OpCode:8, KeyLen:16,
-                                            ExtraLen:8, 0:8, VBucket:16,
-                                            BodyLen:32,
-                                            Opaque:32,
-                                            CAS:64>>}) ->
+process_message(Socket, StorageServer, <<?REQ_MAGIC:8, OpCode:8, KeyLen:16,
+                                         ExtraLen:8, 0:8, VBucket:16,
+                                         BodyLen:32,
+                                         Opaque:32,
+                                         CAS:64>>) ->
 
     {Extra, Key, Body} = read_message(Socket, KeyLen, ExtraLen, BodyLen),
 
@@ -115,5 +115,12 @@ init(Socket) ->
     loop(Socket, Handler).
 
 loop(Socket, Handler) ->
-    process_message(Socket, Handler, gen_tcp:recv(Socket, ?HEADER_LEN)),
-    loop(Socket, Handler).
+    case gen_tcp:recv(Socket, ?HEADER_LEN) of
+        {ok, Data} ->
+            process_message(Socket, Handler, Data),
+            loop(Socket, Handler);
+        {error, closed} ->
+            ok;
+        {error, Error} ->
+            ?LOG_ERROR("Error receiving from socket: ~p", [Error])
+    end.
