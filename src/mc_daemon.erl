@@ -331,8 +331,8 @@ handle_info({'EXIT', _Pid, normal}, StateName, State) ->
     % tap stream process terminated successfully
     {next_state, StateName, State}.
 
-
-terminate(_Reason, _StateName, _State) ->
+terminate(_Reason, _StateName, State) ->
+    gen_tcp:close(State#state.socket),
     ok.
 
 code_change(_OldVsn, StateName, State, _Extra) ->
