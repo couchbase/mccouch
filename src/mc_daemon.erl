@@ -178,6 +178,8 @@ processing({OpCode, VBucket, Header, Key, Body, CAS}, _From, State) ->
     ?LOG_INFO("MC daemon: got unhandled call: ~p/~p/~p/~p/~p/~p.",
                [OpCode, VBucket, Header, Key, Body, CAS]),
     {reply, #mc_response{status=?UNKNOWN_COMMAND, body="WTF, mate?"}, processing, State};
+processing({?NOOP, _Opaque}, _From, State) ->
+    {reply, #mc_response{},  processing, State};
 processing(Msg, _From, _State) ->
     ?LOG_INFO("Got unknown thing in processing/3: ~p", [Msg]),
     exit("WTF").
