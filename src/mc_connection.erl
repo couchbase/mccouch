@@ -53,7 +53,7 @@ process_message(Socket, StorageServer, <<?REQ_MAGIC:8, ?TAP_CONNECT:8, KeyLen:16
     {Extra, Key, Body} = read_message(Socket, KeyLen, ExtraLen, BodyLen),
 
     % Hand the request off to the server.
-    gen_fsm:send_event(StorageServer, {?TAP_CONNECT, Extra, Key, Body, CAS, Socket, Opaque});
+    gen_fsm:send_event(StorageServer, {?TAP_CONNECT, Extra, Key, Body, CAS, Opaque});
 process_message(Socket, StorageServer, <<?REQ_MAGIC:8, ?STAT:8, KeyLen:16,
                                          ExtraLen:8, 0:8, _VBucket:16,
                                          BodyLen:32,
@@ -71,21 +71,21 @@ process_message(Socket, StorageServer, <<?REQ_MAGIC:8, ?SETQ:8, KeyLen:16,
                                          Opaque:32,
                                          CAS:64>>) ->
     {Extra, Key, Body} = read_message(Socket, KeyLen, ExtraLen, BodyLen),
-    gen_fsm:send_event(StorageServer, {?SETQ, VBucket, Extra, Key, Body, CAS, Socket, Opaque});
+    gen_fsm:sync_send_event(StorageServer, {?SETQ, VBucket, Extra, Key, Body, CAS, Opaque}, infinity);
 process_message(Socket, StorageServer, <<?REQ_MAGIC:8, ?DELETEQ:8, KeyLen:16,
                                          ExtraLen:8, 0:8, VBucket:16,
                                          BodyLen:32,
                                          Opaque:32,
                                          CAS:64>>) ->
     {Extra, Key, Body} = read_message(Socket, KeyLen, ExtraLen, BodyLen),
-    gen_fsm:send_event(StorageServer, {?DELETEQ, VBucket, Extra, Key, Body, CAS, Socket, Opaque});
+    gen_fsm:sync_send_event(StorageServer, {?DELETEQ, VBucket, Extra, Key, Body, CAS, Opaque}, infinity);
 process_message(Socket, StorageServer, <<?REQ_MAGIC:8, ?NOOP:8, KeyLen:16,
                                          ExtraLen:8, 0:8, _VBucket:16,
                                          BodyLen:32,
                                          Opaque:32,
                                          _CAS:64>>) ->
     {_Extra, _Key, _Body} = read_message(Socket, KeyLen, ExtraLen, BodyLen),
-    gen_fsm:send_event(StorageServer, {?NOOP, Socket, Opaque});
+    gen_fsm:sync_send_event(StorageServer, {?NOOP, Opaque}, infinity);
 process_message(Socket, StorageServer, <<?REQ_MAGIC:8, ?SET_VBUCKET_STATE:8,
                                          KeyLen:16, ExtraLen:8, 0:8, VBucket:16,
                                          BodyLen:32,
@@ -111,7 +111,7 @@ process_message(Socket, StorageServer, <<?REQ_MAGIC:8, OpCode:8, KeyLen:16,
     end.
 
 init(Socket) ->
-    {ok, Handler} = mc_daemon:start_link(),
+    {ok, Handler} = mc_daemon:start_link(Socket),
     loop(Socket, Handler).
 
 loop(Socket, Handler) ->

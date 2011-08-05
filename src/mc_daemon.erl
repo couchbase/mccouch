@@ -3,16 +3,14 @@
 -behaviour(gen_fsm).
 
 %% API
--export([start_link/0]).
+-export([start_link/1]).
 
 %% gen_fsm callbacks
 -export([init/1, handle_event/3,
          handle_sync_event/4, handle_info/3, terminate/3, code_change/4]).
 
 %% My states
--export([processing/2, processing/3,
-        batching/2,
-        committing/2]).
+-export([processing/2, processing/3, batching/3]).
 
 %% Kind of ugly to export these, but modularity win.
 -export([with_open_db/3, db_name/2, db_prefix/1]).
@@ -22,14 +20,35 @@
 -include("couch_db.hrl").
 -include("mc_constants.hrl").
 
--record(state, {db, json_mode=true, batch_ops=0, terminal_opaque=0, errors=[]}).
+-record(state, {
+          db,
+          json_mode = true,
+          batch_ops = 0,
+          terminal_opaque = nil,
+          errors = [],
+          worker_batch_size,
+          batch,
+          batch_size = 0,
+          max_workers,
+          workers = [],
+          caller = nil,
+          socket
+         }).
 
-start_link() ->
-    gen_fsm:start_link(?MODULE, [], []).
+start_link(Socket) ->
+    gen_fsm:start_link(?MODULE, Socket, []).
 
-init([]) ->
-    DbName = <<"default">>,
-    {ok, processing, #state{db=DbName}}.
+init(Socket) ->
+    process_flag(trap_exit, true),
+    WorkerBatchSize = list_to_integer(
+                        couch_config:get("mc_couch", "write_worker_batch_size", "100")),
+    MaxWorkers = list_to_integer(
+                   couch_config:get("mc_couch", "write_workers", "4")),
+    {ok, processing, #state{db = <<"default">>,
+                            socket = Socket,
+                            worker_batch_size = WorkerBatchSize,
+                            max_workers = MaxWorkers
+                           }}.
 
 db_name(VBucket, State)->
     iolist_to_binary([State#state.db, $/, integer_to_list(VBucket)]).
@@ -78,53 +97,6 @@ handle_set_call(Db, Key, Flags, Expiration, Value, JsonMode) ->
                              JsonMode),
     #mc_response{cas=NewCas}.
 
-%% Fun receives an open Db
-do_batch_item(Cmd, Fun, VBucket, Opaque, Socket, State) ->
-    Me = self(),
-    spawn_link(fun() ->
-                       gen_fsm:send_event(Me,
-                                          {item_complete, Cmd, Opaque, Socket,
-                                           with_open_db(Fun, VBucket, State,
-                                                        #mc_response{status= ?EINVAL,
-                                                                     body= <<"Error opening DB">>})})
-               end),
-    State#state{batch_ops=State#state.batch_ops + 1}.
-
-handle_setq_call(VBucket, Key, Flags, Expiration, Value, _CAS, Opaque, Socket, State) ->
-    do_batch_item(?SETQ,
-                  fun(Db) ->
-                          case catch(mc_couch_kv:set(Db, Key,
-                                                     Flags,
-                                                     Expiration,
-                                                     Value,
-                                                     State#state.json_mode)) of
-                              CAS when is_integer(CAS) ->
-                                  #mc_response{cas=CAS};
-                              Error ->
-                                  ?LOG_INFO("Error persisting=~p.", [Error]),
-                                  Message = io_lib:format("~p", [Error]),
-                                  #mc_response{status=?EINTERNAL,
-                                               body=Message}
-                          end
-                  end,
-                  VBucket, Opaque, Socket, State).
-
-handle_delq_call(VBucket, Key, _CAS, Opaque, Socket, State) ->
-    do_batch_item(?DELETEQ,
-                  fun(Db) ->
-                          case catch(mc_couch_kv:delete(Db, Key)) of
-                              ok ->
-                                  #mc_response{};
-                              not_found ->
-                                  #mc_response{status=?KEY_ENOENT};
-                              Error ->
-                                  Message = io_lib:format("~p", [Error]),
-                                  #mc_response{status=?EINTERNAL,
-                                               body=Message}
-                          end
-                  end,
-                  VBucket, Opaque, Socket, State).
-
 handle_delete_call(Db, Key) ->
     case mc_couch_kv:delete(Db, Key) of
         ok -> #mc_response{};
@@ -138,6 +110,29 @@ delete_db(State, Key) ->
                       couch_server:delete(list_to_binary(DbName), []),
                       VBucketAndState
               end, mc_couch_vbucket:list_vbuckets(State)).
+
+create_async_batch(State, VBucket, Opaque, Op, Doc) ->
+    Batch = dict:append(VBucket, {Opaque, Op, Doc}, dict:new()),
+    State#state{
+      batch = Batch,
+      batch_size = 1,
+      workers = [],
+      caller = nil,
+      terminal_opaque = nil
+     }.
+
+processing({?SETQ = Op, VBucket, <<Flags:32, Expiration:32>>, Key, Value,
+            _CAS, Opaque}, From, State) ->
+    gen_fsm:reply(From, ok),
+    Doc = mc_couch_kv:mk_doc(Key, Flags, Expiration, Value, State#state.json_mode),
+    NewState = create_async_batch(State, VBucket, Opaque, Op, Doc),
+    {next_state, batching, NewState};
+
+processing({?DELETEQ = Op, VBucket, <<>>, Key, <<>>, _CAS, Opaque}, From, State) ->
+    gen_fsm:reply(From, ok),
+    Doc = #doc{id = Key, deleted = true, body = {[]}},
+    NewState = create_async_batch(State, VBucket, Opaque, Op, Doc),
+    {next_state, batching, NewState};
 
 processing({?GET, VBucket, <<>>, Key, <<>>, _CAS}, _From, State) ->
     with_open_db_or_einval(fun(Db) -> {reply, handle_get_call(Db, Key), processing, State} end,
@@ -187,25 +182,18 @@ processing(Msg, _From, _State) ->
     ?LOG_INFO("Got unknown thing in processing/3: ~p", [Msg]),
     exit("WTF").
 
-processing({?STAT, _Extra, <<"vbucket">>, _Body, _CAS, Socket, Opaque}, State) ->
-    mc_couch_vbucket:handle_stats(Socket, Opaque, State),
+processing({?STAT, _Extra, <<"vbucket">>, _Body, _CAS, Opaque}, State) ->
+    mc_couch_vbucket:handle_stats(State#state.socket, Opaque, State),
     {next_state, processing, State};
-processing({?TAP_CONNECT, Extra, _Key, Body, _CAS, Socket, Opaque}, State) ->
-    mc_tap:run(State, Opaque, Socket, Extra, Body),
+processing({?TAP_CONNECT, Extra, _Key, Body, _CAS, Opaque}, State) ->
+    mc_tap:run(State, Opaque, State#state.socket, Extra, Body),
     {next_state, processing, State};
-processing({?STAT, _Extra, _Key, _Body, _CAS, Socket, Opaque}, State) ->
-    mc_couch_stats:stats(Socket, Opaque),
+processing({?STAT, _Extra, _Key, _Body, _CAS, Opaque}, State) ->
+    mc_couch_stats:stats(State#state.socket, Opaque),
     {next_state, processing, State};
-processing({?NOOP, Socket, Opaque}, State) ->
-    mc_connection:respond(Socket, ?NOOP, Opaque, #mc_response{}),
+processing({?NOOP, Opaque}, State) ->
+    mc_connection:respond(State#state.socket, ?NOOP, Opaque, #mc_response{}),
     {next_state, processing, State};
-processing({?SETQ, VBucket, <<Flags:32, Expiration:32>>, Key, Value,
-             CAS, Socket, Opaque}, State) ->
-    {next_state, batching, handle_setq_call(VBucket, Key, Flags, Expiration, Value,
-                                            CAS, Opaque, Socket, State)};
-processing({?DELETEQ, VBucket, <<>>, Key, <<>>,
-             CAS, Socket, Opaque}, State) ->
-    {next_state, batching, handle_delq_call(VBucket, Key, CAS, Opaque, Socket, State)};
 processing(Msg, _State) ->
     ?LOG_INFO("Got unknown thing in processing/2: ~p", [Msg]),
     exit("WTF").
@@ -214,54 +202,65 @@ processing(Msg, _State) ->
 %% Batch stuff
 %%
 
-batching({?SETQ, VBucket, <<Flags:32, Expiration:32>>, Key, Value,
-             CAS, Socket, Opaque}, State) ->
-    {next_state, batching, handle_setq_call(VBucket, Key, Flags, Expiration, Value,
-                                            CAS, Opaque, Socket, State)};
-batching({?DELETEQ, VBucket, <<>>, Key, <<>>,
-             CAS, Socket, Opaque}, State) ->
-    {next_state, batching, handle_delq_call(VBucket, Key, CAS, Opaque, Socket, State)};
-batching({item_complete, Cmd, Opaque, _Socket, Res}, State) ->
-    State2 = add_failure_state(State, Cmd, Opaque, Res),
-    {next_state, batching, State2#state{batch_ops=State2#state.batch_ops - 1}};
-batching({?NOOP, Socket, Opaque}, State=#state{batch_ops=0}) ->
-    ?LOG_INFO("NOOP in idle batch.  Proceeding to processing.", []),
-    complete_batch(Socket, State#state{terminal_opaque=Opaque});
-batching({?NOOP, _Socket, Opaque}, State) ->
-    {next_state, committing, State#state{terminal_opaque=Opaque}};
-batching(Msg, _State) ->
-    ?LOG_INFO("Got unknown thing in batching/2: ~p", [Msg]),
-    exit("WTF").
+add_async_job(State, From, VBucket, Opaque, Op, Doc) ->
+    #state{
+          batch = Batch, batch_size = BatchSize,
+          worker_batch_size = WorkerBatchSize, workers = Workers,
+          max_workers = MaxWorkers, socket = Socket
+    } = State,
+    case (BatchSize < WorkerBatchSize) of
+        true ->
+            gen_fsm:reply(From, ok);
+        false ->
+            ok
+    end,
+    Batch2 = dict:append(VBucket, {Opaque, Op, Doc}, Batch),
+    BatchSize2 = BatchSize + 1,
+    case BatchSize2 >= WorkerBatchSize of
+        true ->
+            case (length(Workers) >= MaxWorkers) of
+                true ->
+                    State#state{caller = From, batch = Batch2, batch_size = BatchSize2};
+                false ->
+                    WorkerPid = spawn_link(fun() ->
+                                                   update_docs(Batch2, State#state.db, Socket)
+                                           end),
+                    State#state{batch = dict:new(), batch_size = 0, workers = [WorkerPid | Workers]}
+            end;
+        false ->
+            State#state{batch = Batch2, batch_size = BatchSize2}
+    end.
 
-%%
-%% Committing a transaction
-%%
+batching({?SETQ = Op, VBucket, <<Flags:32, Expiration:32>>, Key, Value,
+          _CAS, Opaque}, From, State) ->
+    Doc = mc_couch_kv:mk_doc(Key, Flags, Expiration, Value, State#state.json_mode),
+    NewState = add_async_job(State, From, VBucket, Opaque, Op, Doc),
+    {next_state, batching, NewState};
 
-add_failure_state(State, _Op, _Opaque, _Res=#mc_response{status=?SUCCESS}) ->
-    State;
-add_failure_state(State, Op, Opaque, Res) ->
-    State#state{errors=[{Opaque, Op, Res}|State#state.errors]}.
+batching({?DELETEQ = Op, VBucket, <<>>, Key, <<>>, _CAS, Opaque}, From, State) ->
+    Doc = #doc{id = Key, deleted = true, body = {[]}},
+    NewState = add_async_job(State, From, VBucket, Opaque, Op, Doc),
+    {next_state, batching, NewState};
 
-deliver_errors(Socket, Errors) ->
-    lists:foreach(fun({Opaque, Op, Res}) ->
-                          mc_connection:respond(Socket, Op, Opaque, Res)
-                  end,
-                  lists:sort(Errors)).
-
-complete_batch(Socket, State) ->
-    deliver_errors(Socket, State#state.errors),
-    mc_connection:respond(Socket, ?NOOP, State#state.terminal_opaque, #mc_response{}),
-    {next_state, processing, State#state{batch_ops=0, errors=[]}}.
-
-committing({item_complete, Cmd, Opaque, Socket, Res}, State=#state{batch_ops=1}) ->
-    State2 = add_failure_state(State, Cmd, Opaque, Res),
-    complete_batch(Socket, State2);
-committing({item_complete, Cmd, Opaque, _Socket, Res}, State) ->
-    State2 = add_failure_state(State, Cmd, Opaque, Res),
-    {next_state, committing, State2#state{batch_ops=State2#state.batch_ops - 1}};
-committing(Msg, _State) ->
-    ?LOG_INFO("Got unknown thing in committing/2: ~p", [Msg]),
-    exit("WTF").
+batching({?NOOP, Opaque}, From, State) ->
+    #state{
+          batch = Batch, batch_size = BatchSize, workers = Workers, socket = Socket
+    } = State,
+    case BatchSize > 0 of
+        true ->
+            update_docs(Batch, State#state.db, Socket);
+        false ->
+            ok
+    end,
+    case Workers of
+        [] ->
+            mc_connection:respond(Socket, ?NOOP, Opaque, #mc_response{}),
+            gen_fsm:reply(From, ok),
+            {next_state, processing, State};
+        _ ->
+            NewState = State#state{terminal_opaque = Opaque, caller = From},
+            {next_state, batch_ending, NewState}
+    end.
 
 %% Everything else
 
@@ -278,11 +277,98 @@ handle_sync_event(_Event, _From, StateName, State) ->
     Reply = ok,
     {reply, Reply, StateName, State}.
 
-handle_info(_Info, StateName, State) ->
+handle_info({'EXIT', Pid, normal}, batching, State) ->
+    #state{
+            workers = Workers, batch = Batch, batch_size = BatchSize,
+            socket = Socket, caller = From
+    } = State,
+    case Workers -- [Pid] of
+        Workers ->
+            {next_state, batching, State};
+        Workers2 ->
+        case From =:= nil of
+            true ->
+                {next_state, batching, State#state{workers = Workers2}};
+            false ->
+                true = (BatchSize > 0),
+                gen_fsm:reply(From, ok),
+                WorkerPid = spawn_link(fun() ->
+                                               update_docs(Batch, State#state.db, Socket)
+                                       end),
+                NewState = State#state{
+                             workers = [WorkerPid | Workers2],
+                             batch = dict:new(),
+                             batch_size = 0,
+                             caller = nil
+                            },
+                {next_state, batching, NewState}
+        end
+    end;
+
+handle_info({'EXIT', Pid, normal}, batch_ending, State) ->
+    #state{
+            workers = Workers, caller = From,
+            terminal_opaque = Opaque, socket = Socket
+    } = State,
+    case Workers -- [Pid] of
+        Workers ->
+            {next_state, batch_ending, State};
+        Workers2 ->
+            case Workers2 of
+                [] ->
+                    mc_connection:respond(Socket, ?NOOP, Opaque, #mc_response{}),
+                    gen_fsm:reply(From, ok),
+                    {next_state, processing, State};
+                _ ->
+                    {next_state, batch_ending, State#state{workers = Workers2}}
+            end
+    end;
+
+handle_info({'EXIT', _Pid, normal}, StateName, State) ->
+    % tap stream process terminated successfully
     {next_state, StateName, State}.
+
 
 terminate(_Reason, _StateName, _State) ->
     ok.
 
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
+
+
+update_docs(Batch, BucketName, Socket) ->
+    dict:fold(
+        fun(VBucketId, Docs, _Acc) ->
+            DbName = iolist_to_binary([<<BucketName/binary, $/>>, integer_to_list(VBucketId)]),
+            case couch_db:open_int(DbName, []) of
+            {ok, Db} ->
+                {ok, Results} = couch_db:update_docs(
+                    Db, [Doc || {_Opaque, _Op, Doc} <- Docs], [clobber]),
+                lists:foreach(
+                    fun({{ok, _}, _}) ->
+                            ok;
+                        ({Error, {Opaque, Op, #doc{id = Key}}}) ->
+                            ErrorResp = #mc_response{
+                                status = ?EINTERNAL,
+                                body = io_lib:format(
+                                    "Error persisting key ~s in database ~s: ~p",
+                                    [Key, DbName, Error])
+                            },
+                            mc_connection:respond(Socket, Op, Opaque, ErrorResp)
+                    end,
+                    lists:zip(Results, Docs)),
+                couch_db:close(Db);
+            Error ->
+                ErrorResp = #mc_response{
+                    status = ?EINVAL,
+                    body = io_lib:format("Error opening database ~s: ~s",
+                        [DbName, couch_util:to_binary(Error)])
+                },
+                lists:foreach(
+                    fun({Opaque, Op, _Doc}) ->
+                        mc_connection:respond(Socket, Op, Opaque, ErrorResp)
+                    end,
+                    Docs)
+            end
+        end,
+        [], Batch).

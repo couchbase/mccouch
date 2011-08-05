@@ -2,7 +2,7 @@
 
 -include("couch_db.hrl").
 
--export([get/2, grok_doc/1, set/6, delete/2]).
+-export([get/2, grok_doc/1, set/6, delete/2, mk_doc/5]).
 
 dig_out_attachment(Doc, FileName) ->
     case [A || A <- Doc#doc.atts, A#att.name == FileName] of
