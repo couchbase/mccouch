@@ -64,7 +64,7 @@ process_message(Socket, StorageServer, <<?REQ_MAGIC:8, ?STAT:8, KeyLen:16,
     {Extra, Key, Body} = read_message(Socket, KeyLen, ExtraLen, BodyLen),
 
     % Hand the request off to the server.
-    gen_fsm:send_event(StorageServer, {?STAT, Extra, Key, Body, CAS, Socket, Opaque});
+    gen_fsm:send_event(StorageServer, {?STAT, Extra, Key, Body, CAS, Opaque});
 process_message(Socket, StorageServer, <<?REQ_MAGIC:8, ?SETQ:8, KeyLen:16,
                                          ExtraLen:8, 0:8, VBucket:16,
                                          BodyLen:32,
