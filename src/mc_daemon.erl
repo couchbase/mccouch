@@ -206,9 +206,9 @@ add_async_job(State, From, VBucket, Opaque, Op, Doc) ->
     #state{
           batch = Batch, batch_size = BatchSize,
           worker_batch_size = WorkerBatchSize, workers = Workers,
-          max_workers = MaxWorkers, socket = Socket
+          max_workers = MaxWorkers
     } = State,
-    case (BatchSize < WorkerBatchSize) of
+    case (BatchSize < WorkerBatchSize) orelse (length(Workers) < MaxWorkers) of
         true ->
             gen_fsm:reply(From, ok);
         false ->
@@ -216,19 +216,17 @@ add_async_job(State, From, VBucket, Opaque, Op, Doc) ->
     end,
     Batch2 = dict:append(VBucket, {Opaque, Op, Doc}, Batch),
     BatchSize2 = BatchSize + 1,
+    State2 = State#state{batch = Batch2, batch_size = BatchSize2},
     case BatchSize2 >= WorkerBatchSize of
         true ->
             case (length(Workers) >= MaxWorkers) of
                 true ->
-                    State#state{caller = From, batch = Batch2, batch_size = BatchSize2};
+                    State2#state{caller = From};
                 false ->
-                    WorkerPid = spawn_link(fun() ->
-                                                   update_docs(Batch2, State#state.db, Socket)
-                                           end),
-                    State#state{batch = dict:new(), batch_size = 0, workers = [WorkerPid | Workers]}
+                    maybe_start_worker(State2)
             end;
         false ->
-            State#state{batch = Batch2, batch_size = BatchSize2}
+            State2
     end.
 
 batching({?SETQ = Op, VBucket, <<Flags:32, Expiration:32>>, Key, Value,
@@ -277,10 +275,24 @@ handle_sync_event(_Event, _From, StateName, State) ->
     Reply = ok,
     {reply, Reply, StateName, State}.
 
+maybe_start_worker(#state{batch_size = 0} = State) ->
+    State;
+maybe_start_worker(State) ->
+    #state{
+            workers = Workers, batch = Batch, socket = Socket
+          } = State,
+    WorkerPid = spawn_link(fun() ->
+                                   update_docs(Batch, State#state.db, Socket)
+                           end),
+    State#state{
+      workers = [WorkerPid | Workers],
+      batch = dict:new(),
+      batch_size = 0
+     }.
+
 handle_info({'EXIT', Pid, normal}, batching, State) ->
     #state{
-            workers = Workers, batch = Batch, batch_size = BatchSize,
-            socket = Socket, caller = From
+            workers = Workers, caller = From
     } = State,
     case Workers -- [Pid] of
         Workers ->
@@ -290,18 +302,9 @@ handle_info({'EXIT', Pid, normal}, batching, State) ->
             true ->
                 {next_state, batching, State#state{workers = Workers2}};
             false ->
-                true = (BatchSize > 0),
                 gen_fsm:reply(From, ok),
-                WorkerPid = spawn_link(fun() ->
-                                               update_docs(Batch, State#state.db, Socket)
-                                       end),
-                NewState = State#state{
-                             workers = [WorkerPid | Workers2],
-                             batch = dict:new(),
-                             batch_size = 0,
-                             caller = nil
-                            },
-                {next_state, batching, NewState}
+                NewState = maybe_start_worker(State#state{workers = Workers2}),
+                {next_state, batching, NewState#state{caller = nil}}
         end
     end;
 
