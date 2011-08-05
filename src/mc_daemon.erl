@@ -30,7 +30,7 @@
           batch,
           batch_size = 0,
           max_workers,
-          workers = [],
+          worker_sup,
           caller = nil,
           socket
          }).
@@ -39,15 +39,16 @@ start_link(Socket) ->
     gen_fsm:start_link(?MODULE, Socket, []).
 
 init(Socket) ->
-    process_flag(trap_exit, true),
     WorkerBatchSize = list_to_integer(
                         couch_config:get("mc_couch", "write_worker_batch_size", "100")),
     MaxWorkers = list_to_integer(
                    couch_config:get("mc_couch", "write_workers", "4")),
+    {ok, WorkerSup} = mc_batch_sup:start_link(),
     {ok, processing, #state{db = <<"default">>,
                             socket = Socket,
                             worker_batch_size = WorkerBatchSize,
-                            max_workers = MaxWorkers
+                            max_workers = MaxWorkers,
+                            worker_sup = WorkerSup
                            }}.
 
 db_name(VBucket, State)->
@@ -116,7 +117,6 @@ create_async_batch(State, VBucket, Opaque, Op, Doc) ->
     State#state{
       batch = Batch,
       batch_size = 1,
-      workers = [],
       caller = nil,
       terminal_opaque = nil
      }.
@@ -204,13 +204,16 @@ processing(Msg, _State) ->
 %% Batch stuff
 %%
 
+num_workers(State) ->
+    length(supervisor:which_children(State#state.worker_sup)).
+
 add_async_job(State, From, VBucket, Opaque, Op, Doc) ->
     #state{
           batch = Batch, batch_size = BatchSize,
-          worker_batch_size = WorkerBatchSize, workers = Workers,
+          worker_batch_size = WorkerBatchSize,
           max_workers = MaxWorkers
     } = State,
-    case (BatchSize < WorkerBatchSize) orelse (length(Workers) < MaxWorkers) of
+    case (BatchSize < WorkerBatchSize) orelse (num_workers(State) < MaxWorkers) of
         true ->
             gen_fsm:reply(From, ok);
         false ->
@@ -221,7 +224,7 @@ add_async_job(State, From, VBucket, Opaque, Op, Doc) ->
     State2 = State#state{batch = Batch2, batch_size = BatchSize2},
     case BatchSize2 >= WorkerBatchSize of
         true ->
-            case (length(Workers) >= MaxWorkers) of
+            case (num_workers(State) >= MaxWorkers) of
                 true ->
                     State2#state{caller = From};
                 false ->
@@ -244,16 +247,16 @@ batching({?DELETEQ = Op, VBucket, <<>>, Key, <<>>, _CAS, Opaque}, From, State) -
 
 batching({?NOOP, Opaque}, From, State) ->
     #state{
-          batch = Batch, batch_size = BatchSize, workers = Workers, socket = Socket
+          batch = Batch, batch_size = BatchSize, socket = Socket
     } = State,
     case BatchSize > 0 of
         true ->
-            update_docs(Batch, State#state.db, Socket);
+            mc_batch_sup:sync_update_docs(Batch, State#state.db, Socket);
         false ->
             ok
     end,
-    case Workers of
-        [] ->
+    case num_workers(State) of
+        0 ->
             mc_connection:respond(Socket, ?NOOP, Opaque, #mc_response{}),
             gen_fsm:reply(From, ok),
             {next_state, processing, State};
@@ -281,56 +284,40 @@ maybe_start_worker(#state{batch_size = 0} = State) ->
     State;
 maybe_start_worker(State) ->
     #state{
-            workers = Workers, batch = Batch, socket = Socket
+            worker_sup = WorkerSup, batch = Batch, socket = Socket
           } = State,
-    WorkerPid = spawn_link(fun() ->
-                                   update_docs(Batch, State#state.db, Socket)
-                           end),
+    {ok, _WorkerPid} = mc_batch_sup:start_worker(WorkerSup, Batch,
+                                                 State#state.db, Socket),
     State#state{
-      workers = [WorkerPid | Workers],
       batch = dict:new(),
       batch_size = 0
      }.
 
-handle_info({'EXIT', Pid, normal}, batching, State) ->
-    #state{
-            workers = Workers, caller = From
-    } = State,
-    case Workers -- [Pid] of
-        Workers ->
+handle_info({'DOWN', _Ref, process, _Pid, normal}, batching, State) ->
+    #state{caller = From} = State,
+    case From =:= nil of
+        true ->
             {next_state, batching, State};
-        Workers2 ->
-        case From =:= nil of
-            true ->
-                {next_state, batching, State#state{workers = Workers2}};
-            false ->
-                gen_fsm:reply(From, ok),
-                NewState = maybe_start_worker(State#state{workers = Workers2}),
-                {next_state, batching, NewState#state{caller = nil}}
-        end
+        false ->
+            gen_fsm:reply(From, ok),
+            NewState = maybe_start_worker(State),
+            {next_state, batching, NewState#state{caller = nil}}
     end;
 
-handle_info({'EXIT', Pid, normal}, batch_ending, State) ->
+handle_info({'DOWN', _Ref, process, _Pid, normal}, batch_ending, State) ->
     #state{
-            workers = Workers, caller = From,
-            terminal_opaque = Opaque, socket = Socket
-    } = State,
-    case Workers -- [Pid] of
-        Workers ->
-            {next_state, batch_ending, State};
-        Workers2 ->
-            case Workers2 of
-                [] ->
-                    mc_connection:respond(Socket, ?NOOP, Opaque, #mc_response{}),
-                    gen_fsm:reply(From, ok),
-                    {next_state, processing, State};
-                _ ->
-                    {next_state, batch_ending, State#state{workers = Workers2}}
-            end
+            caller = From, terminal_opaque = Opaque, socket = Socket
+          } = State,
+    case num_workers(State) of
+        0 ->
+            mc_connection:respond(Socket, ?NOOP, Opaque, #mc_response{}),
+            gen_fsm:reply(From, ok),
+            {next_state, processing, State};
+        _ ->
+            {next_state, batch_ending, State}
     end;
 
-handle_info({'EXIT', _Pid, normal}, StateName, State) ->
-    % tap stream process terminated successfully
+handle_info({'DOWN', _Ref, process, _Pid, normal}, StateName, State) ->
     {next_state, StateName, State}.
 
 terminate(_Reason, _StateName, State) ->
@@ -340,40 +327,3 @@ terminate(_Reason, _StateName, State) ->
 code_change(_OldVsn, StateName, State, _Extra) ->
     {ok, StateName, State}.
 
-
-update_docs(Batch, BucketName, Socket) ->
-    dict:fold(
-        fun(VBucketId, Docs, _Acc) ->
-            DbName = iolist_to_binary([<<BucketName/binary, $/>>, integer_to_list(VBucketId)]),
-            case couch_db:open_int(DbName, []) of
-            {ok, Db} ->
-                {ok, Results} = couch_db:update_docs(
-                    Db, [Doc || {_Opaque, _Op, Doc} <- Docs], [clobber]),
-                lists:foreach(
-                    fun({{ok, _}, _}) ->
-                            ok;
-                        ({Error, {Opaque, Op, #doc{id = Key}}}) ->
-                            ErrorResp = #mc_response{
-                                status = ?EINTERNAL,
-                                body = io_lib:format(
-                                    "Error persisting key ~s in database ~s: ~p",
-                                    [Key, DbName, Error])
-                            },
-                            mc_connection:respond(Socket, Op, Opaque, ErrorResp)
-                    end,
-                    lists:zip(Results, Docs)),
-                couch_db:close(Db);
-            Error ->
-                ErrorResp = #mc_response{
-                    status = ?EINVAL,
-                    body = io_lib:format("Error opening database ~s: ~s",
-                        [DbName, couch_util:to_binary(Error)])
-                },
-                lists:foreach(
-                    fun({Opaque, Op, _Doc}) ->
-                        mc_connection:respond(Socket, Op, Opaque, ErrorResp)
-                    end,
-                    Docs)
-            end
-        end,
-        [], Batch).
