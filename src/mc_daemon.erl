@@ -42,7 +42,7 @@ init(Socket) ->
     WorkerBatchSize = list_to_integer(
                         couch_config:get("mc_couch", "write_worker_batch_size", "100")),
     MaxWorkers = list_to_integer(
-                   couch_config:get("mc_couch", "write_workers", "4")),
+                   couch_config:get("mc_couch", "write_workers", "8")),
     {ok, WorkerSup} = mc_batch_sup:start_link(),
     {ok, processing, #state{db = <<"default">>,
                             socket = Socket,
