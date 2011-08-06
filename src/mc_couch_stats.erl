@@ -10,7 +10,7 @@ mk_stat(K, V) -> #mc_response{key=K, body=V}.
 round_value(Val) when not is_number(Val) ->
     Val;
 round_value(Val) when Val == 0 ->
-    integer_to_list(Val);
+    "0";
 round_value(Val) when is_float(Val) ->
     lists:flatten(io_lib:format("~.6f", [Val]));
 round_value(Val) ->

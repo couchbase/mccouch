@@ -187,11 +187,11 @@ processing(Msg, _From, _State) ->
 processing({?STAT, _Extra, <<"vbucket">>, _Body, _CAS, Opaque}, State) ->
     mc_couch_vbucket:handle_stats(State#state.socket, Opaque, State),
     {next_state, processing, State};
-processing({?TAP_CONNECT, Extra, _Key, Body, _CAS, Opaque}, State) ->
-    mc_tap:run(State, Opaque, State#state.socket, Extra, Body),
-    {next_state, processing, State};
 processing({?STAT, _Extra, _Key, _Body, _CAS, Opaque}, State) ->
     mc_couch_stats:stats(State#state.socket, Opaque),
+    {next_state, processing, State};
+processing({?TAP_CONNECT, Extra, _Key, Body, _CAS, Opaque}, State) ->
+    mc_tap:run(State, Opaque, State#state.socket, Extra, Body),
     {next_state, processing, State};
 processing({?NOOP, Opaque}, State) ->
     mc_connection:respond(State#state.socket, ?NOOP, Opaque, #mc_response{}),
