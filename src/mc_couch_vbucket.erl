@@ -4,6 +4,7 @@
          set_vbucket/3,
          handle_delete/2,
          handle_stats/3,
+         handle_db_stats/3,
          handle_set_state/3,
          list_vbuckets/1]).
 
@@ -73,6 +74,19 @@ list_vbuckets(State) ->
     end,
 
     lists:foldl(VBuckets, [], DBs).
+
+handle_db_stats(Socket, Opaque, State) ->
+    lists:foreach(fun({VBInt, _}) ->
+                          {ok, Info} = mc_daemon:with_open_db(fun couch_db:get_db_info/1,
+                                                              VBInt, State),
+                          lists:foreach(fun({K, V}) ->
+                                                StatKey = io_lib:format("vb:~p:~p", [VBInt, K]),
+                                                mc_connection:respond(Socket, ?STAT, Opaque,
+                                                                      mc_couch_stats:mk_stat(StatKey, V))
+                                        end, Info)
+                  end, list_vbuckets(State)),
+    mc_connection:respond(Socket, ?STAT, Opaque,
+                          mc_couch_stats:mk_stat("", "")).
 
 handle_stats(Socket, Opaque, State) ->
     lists:foreach(fun({VBInt, V}) ->

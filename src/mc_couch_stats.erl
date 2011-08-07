@@ -5,7 +5,14 @@
 
 -export([stats/2, mk_stat/2]).
 
-mk_stat(K, V) -> #mc_response{key=K, body=V}.
+ob_to_stat(Ob) when is_binary(Ob) ->
+    binary_to_list(Ob);
+ob_to_stat(Ob) when is_list(Ob) ->
+    Ob;
+ob_to_stat(Ob) ->
+    io_lib:format("~p", [Ob]).
+
+mk_stat(K, V) -> #mc_response{key=K, body=ob_to_stat(V)}.
 
 round_value(Val) when not is_number(Val) ->
     Val;

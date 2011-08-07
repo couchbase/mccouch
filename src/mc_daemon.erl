@@ -187,6 +187,9 @@ processing(Msg, _From, _State) ->
 processing({?STAT, _Extra, <<"vbucket">>, _Body, _CAS, Opaque}, State) ->
     mc_couch_vbucket:handle_stats(State#state.socket, Opaque, State),
     {next_state, processing, State};
+processing({?STAT, _Extra, <<"db">>, _Body, _CAS, Opaque}, State) ->
+    mc_couch_vbucket:handle_db_stats(State#state.socket, Opaque, State),
+    {next_state, processing, State};
 processing({?STAT, _Extra, _Key, _Body, _CAS, Opaque}, State) ->
     mc_couch_stats:stats(State#state.socket, Opaque),
     {next_state, processing, State};
