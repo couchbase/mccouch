@@ -36,6 +36,12 @@ start_link_worker(Batch, BucketName, Socket) ->
     {ok, proc_lib:spawn_link(?MODULE, sync_update_docs, [Batch, BucketName, Socket])}.
 
 sync_update_docs(Batch, BucketName, Socket) ->
+    UpdateOptions = case couch_config:get("mc_couch", "optimistic_writes", "true") of
+                        "true" ->
+                            [clobber, optimistic];
+                        _ ->
+                            [clobber]
+                    end,
     dict:fold(
       fun(VBucketId, Docs, _Acc) ->
               DbName = iolist_to_binary([<<BucketName/binary, $/>>,
@@ -43,7 +49,7 @@ sync_update_docs(Batch, BucketName, Socket) ->
               case couch_db:open_int(DbName, []) of
                   {ok, Db} ->
                       {ok, Results} = couch_db:update_docs(
-                                        Db, [Doc || {_Opaque, _Op, Doc} <- Docs], [clobber]),
+                                        Db, [Doc || {_Opaque, _Op, Doc} <- Docs], UpdateOptions),
                       lists:foreach(
                         fun({{ok, _}, _}) ->
                                 ok;
