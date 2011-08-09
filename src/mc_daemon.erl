@@ -178,8 +178,9 @@ processing({OpCode, VBucket, Header, Key, Body, CAS}, _From, State) ->
     ?LOG_INFO("MC daemon: got unhandled call: ~p/~p/~p/~p/~p/~p.",
                [OpCode, VBucket, Header, Key, Body, CAS]),
     {reply, #mc_response{status=?UNKNOWN_COMMAND, body="WTF, mate?"}, processing, State};
-processing({?NOOP, _Opaque}, _From, State) ->
-    {reply, #mc_response{},  processing, State};
+processing({?NOOP, Opaque}, _From, State) ->
+    mc_connection:respond(State#state.socket, ?NOOP, Opaque, #mc_response{}),
+    {reply, ok, processing, State};
 processing(Msg, _From, _State) ->
     ?LOG_INFO("Got unknown thing in processing/3: ~p", [Msg]),
     exit("WTF").
@@ -195,9 +196,6 @@ processing({?STAT, _Extra, _Key, _Body, _CAS, Opaque}, State) ->
     {next_state, processing, State};
 processing({?TAP_CONNECT, Extra, _Key, Body, _CAS, Opaque}, State) ->
     mc_tap:run(State, Opaque, State#state.socket, Extra, Body),
-    {next_state, processing, State};
-processing({?NOOP, Opaque}, State) ->
-    mc_connection:respond(State#state.socket, ?NOOP, Opaque, #mc_response{}),
     {next_state, processing, State};
 processing(Msg, _State) ->
     ?LOG_INFO("Got unknown thing in processing/2: ~p", [Msg]),

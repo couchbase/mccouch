@@ -85,7 +85,7 @@ process_message(Socket, StorageServer, <<?REQ_MAGIC:8, ?NOOP:8, KeyLen:16,
                                          Opaque:32,
                                          _CAS:64>>) ->
     {_Extra, _Key, _Body} = read_message(Socket, KeyLen, ExtraLen, BodyLen),
-    gen_fsm:sync_send_event(StorageServer, {?NOOP, Opaque}, infinity);
+    ok = gen_fsm:sync_send_event(StorageServer, {?NOOP, Opaque}, infinity);
 process_message(Socket, StorageServer, <<?REQ_MAGIC:8, ?SET_VBUCKET_STATE:8,
                                          KeyLen:16, ExtraLen:8, 0:8, VBucket:16,
                                          BodyLen:32,
