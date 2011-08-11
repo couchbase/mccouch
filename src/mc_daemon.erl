@@ -32,6 +32,7 @@
           max_workers,
           worker_sup,
           caller = nil,
+          worker_refs = [],
           socket
          }).
 
@@ -206,7 +207,8 @@ processing(Msg, _State) ->
 %%
 
 num_workers(State) ->
-    length(supervisor:which_children(State#state.worker_sup)).
+    #state{worker_refs = WorkerRefs} = State,
+    length(WorkerRefs).
 
 add_async_job(State, From, VBucket, Opaque, Op, Doc) ->
     #state{
@@ -285,41 +287,41 @@ maybe_start_worker(#state{batch_size = 0} = State) ->
     State;
 maybe_start_worker(State) ->
     #state{
-            worker_sup = WorkerSup, batch = Batch, socket = Socket
+            worker_sup = WorkerSup, batch = Batch, socket = Socket, worker_refs = WorkerRefs
           } = State,
-    {ok, _WorkerPid} = mc_batch_sup:start_worker(WorkerSup, Batch,
-                                                 State#state.db, Socket),
+    {ok, WorkerRef} = mc_batch_sup:start_worker(WorkerSup, Batch,
+                                                State#state.db, Socket),
     State#state{
       batch = dict:new(),
-      batch_size = 0
+      batch_size = 0,
+      worker_refs = [WorkerRef|WorkerRefs]
      }.
 
-handle_info({'DOWN', _Ref, process, _Pid, normal}, batching, State) ->
-    #state{caller = From} = State,
+handle_info({'DOWN', Ref, process, _Pid, normal}, batching, State) ->
+    #state{caller = From, worker_refs = WorkerRefs} = State,
     case From =:= nil of
         true ->
-            {next_state, batching, State};
+            {next_state, batching, State#state{worker_refs = WorkerRefs -- [Ref]}};
         false ->
             gen_fsm:reply(From, ok),
             NewState = maybe_start_worker(State),
-            {next_state, batching, NewState#state{caller = nil}}
+            #state{worker_refs = NewWorkerRefs} = NewState,
+            {next_state, batching, NewState#state{caller = nil, worker_refs = NewWorkerRefs -- [Ref]}}
     end;
 
-handle_info({'DOWN', _Ref, process, _Pid, normal}, batch_ending, State) ->
+handle_info({'DOWN', Ref, process, _Pid, normal}, batch_ending, State) ->
     #state{
-            caller = From, terminal_opaque = Opaque, socket = Socket
+            caller = From, terminal_opaque = Opaque, socket = Socket, worker_refs = WorkerRefs
           } = State,
-    case num_workers(State) of
+    WorkerRefs2 = WorkerRefs -- [Ref],
+    case length(WorkerRefs2) of
         0 ->
             mc_connection:respond(Socket, ?NOOP, Opaque, #mc_response{}),
             gen_fsm:reply(From, ok),
-            {next_state, processing, State};
+            {next_state, processing, State#state{worker_refs = WorkerRefs2}};
         _ ->
-            {next_state, batch_ending, State}
-    end;
-
-handle_info({'DOWN', _Ref, process, _Pid, normal}, StateName, State) ->
-    {next_state, StateName, State}.
+            {next_state, batch_ending, State#state{worker_refs = WorkerRefs2}}
+    end.
 
 terminate(_Reason, _StateName, State) ->
     gen_tcp:close(State#state.socket),

@@ -23,14 +23,11 @@ init([]) ->
           [{?MODULE, {?MODULE, start_link_worker, []},
             temporary, 3600000, worker, []}]}}.
 
-%% {ok, Pid}
+%% {ok, Ref}
 start_worker(Sup, Batch, BucketName, Socket) ->
-    case supervisor:start_child(Sup, [Batch, BucketName, Socket]) of
-        {ok, Pid} ->
-            _Ref = monitor(process, Pid),
-            {ok, Pid};
-        X -> X
-    end.
+   {ok, Pid} = supervisor:start_child(Sup, [Batch, BucketName, Socket]),
+   Ref = monitor(process, Pid),
+   {ok, Ref}.
 
 start_link_worker(Batch, BucketName, Socket) ->
     {ok, proc_lib:spawn_link(?MODULE, sync_update_docs, [Batch, BucketName, Socket])}.
