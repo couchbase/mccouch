@@ -234,7 +234,7 @@ add_async_job(State, From, VBucket, Opaque, Op, Job) ->
     true ->
         CurrentList2 = [{Opaque, Op, Job}],
         CurrentVBucket2 = VBucket,
-        Batch2 = dict:append_list(CurrentVBucket, CurrentList, Batch)
+        Batch2 = dict:append_list(CurrentVBucket, lists:reverse(CurrentList), Batch)
     end,
     BatchSize2 = BatchSize + 1,
     State2 = State#state{whole_batch = Batch2, batch_size = BatchSize2,
@@ -306,8 +306,7 @@ maybe_start_worker(State) ->
             worker_refs = WorkerRefs, current_vbucket = CurrentVBucket,
             current_vbucket_list = CurrentList
           } = State,
-
-    Batch2 = dict:append_list(CurrentVBucket, CurrentList, Batch),
+    Batch2 = dict:append_list(CurrentVBucket, lists:reverse(CurrentList), Batch),
     {ok, WorkerRef} = mc_batch_sup:start_worker(WorkerSup, Batch2,
                                                 State#state.db, Socket),
     State#state{
