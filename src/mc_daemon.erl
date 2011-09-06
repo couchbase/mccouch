@@ -113,8 +113,8 @@ delete_db(State, Key) ->
                       VBucketAndState
               end, mc_couch_vbucket:list_vbuckets(State)).
 
-create_async_batch(State, VBucket, Opaque, Op, Doc) ->
-    Batch = dict:append(VBucket, {Opaque, Op, Doc}, dict:new()),
+create_async_batch(State, VBucket, Opaque, Op, Job) ->
+    Batch = dict:append(VBucket, {Opaque, Op, Job}, dict:new()),
     State#state{
       batch = Batch,
       batch_size = 1,
@@ -125,14 +125,14 @@ create_async_batch(State, VBucket, Opaque, Op, Doc) ->
 processing({?SETQ = Op, VBucket, <<Flags:32, Expiration:32>>, Key, Value,
             _CAS, Opaque}, From, State) ->
     gen_fsm:reply(From, ok),
-    Doc = mc_couch_kv:mk_doc(Key, Flags, Expiration, Value, State#state.json_mode),
-    NewState = create_async_batch(State, VBucket, Opaque, Op, Doc),
+    NewState = create_async_batch(State, VBucket, Opaque, Op,
+                                  {set, Key, Flags, Expiration, Value, State#state.json_mode}),
     {next_state, batching, NewState};
 
 processing({?DELETEQ = Op, VBucket, <<>>, Key, <<>>, _CAS, Opaque}, From, State) ->
     gen_fsm:reply(From, ok),
-    Doc = #doc{id = Key, deleted = true, body = {[]}},
-    NewState = create_async_batch(State, VBucket, Opaque, Op, Doc),
+    NewState = create_async_batch(State, VBucket, Opaque, Op,
+                                  {delete, Key}),
     {next_state, batching, NewState};
 
 processing({?GET, VBucket, <<>>, Key, <<>>, _CAS}, _From, State) ->
@@ -210,7 +210,7 @@ num_workers(State) ->
     #state{worker_refs = WorkerRefs} = State,
     length(WorkerRefs).
 
-add_async_job(State, From, VBucket, Opaque, Op, Doc) ->
+add_async_job(State, From, VBucket, Opaque, Op, Job) ->
     #state{
           batch = Batch, batch_size = BatchSize,
           worker_batch_size = WorkerBatchSize,
@@ -222,7 +222,7 @@ add_async_job(State, From, VBucket, Opaque, Op, Doc) ->
         false ->
             ok
     end,
-    Batch2 = dict:append(VBucket, {Opaque, Op, Doc}, Batch),
+    Batch2 = dict:append(VBucket, {Opaque, Op, Job}, Batch),
     BatchSize2 = BatchSize + 1,
     State2 = State#state{batch = Batch2, batch_size = BatchSize2},
     case BatchSize2 >= WorkerBatchSize of
@@ -239,13 +239,13 @@ add_async_job(State, From, VBucket, Opaque, Op, Doc) ->
 
 batching({?SETQ = Op, VBucket, <<Flags:32, Expiration:32>>, Key, Value,
           _CAS, Opaque}, From, State) ->
-    Doc = mc_couch_kv:mk_doc(Key, Flags, Expiration, Value, State#state.json_mode),
-    NewState = add_async_job(State, From, VBucket, Opaque, Op, Doc),
+    NewState = add_async_job(State, From, VBucket, Opaque, Op,
+                             {set, Key, Flags, Expiration, Value, State#state.json_mode}),
     {next_state, batching, NewState};
 
 batching({?DELETEQ = Op, VBucket, <<>>, Key, <<>>, _CAS, Opaque}, From, State) ->
-    Doc = #doc{id = Key, deleted = true, body = {[]}},
-    NewState = add_async_job(State, From, VBucket, Opaque, Op, Doc),
+    NewState = add_async_job(State, From, VBucket, Opaque, Op,
+                             {delete, Key}),
     {next_state, batching, NewState};
 
 batching({?NOOP, Opaque}, From, State) ->

@@ -40,7 +40,12 @@ sync_update_docs(Batch, BucketName, Socket) ->
                             [clobber]
                     end,
     dict:fold(
-      fun(VBucketId, Docs, _Acc) ->
+      fun(VBucketId, Jobs, _Acc) ->
+              Docs = lists:map(fun({Opaque, Op, {set, Key, Flags, Expiration, Value, JsonMode}}) ->
+                                      {Opaque, Op, mc_couch_kv:mk_doc(Key, Flags, Expiration, Value, JsonMode)};
+                                  ({Opaque, Op, {delete, Key}}) ->
+                                      {Opaque, Op, #doc{id = Key, deleted = true, body = {[]}}}
+                               end, Jobs),
               DbName = iolist_to_binary([<<BucketName/binary, $/>>,
                                          integer_to_list(VBucketId)]),
               case couch_db:open_int(DbName, []) of
