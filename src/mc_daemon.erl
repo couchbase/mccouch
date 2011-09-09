@@ -27,7 +27,9 @@
           terminal_opaque = nil,
           errors = [],
           worker_batch_size,
-          batch,
+          current_vbucket,
+          current_vbucket_list,
+          whole_batch,
           batch_size = 0,
           max_workers,
           worker_sup,
@@ -114,9 +116,10 @@ delete_db(State, Key) ->
               end, mc_couch_vbucket:list_vbuckets(State)).
 
 create_async_batch(State, VBucket, Opaque, Op, Job) ->
-    Batch = dict:append(VBucket, {Opaque, Op, Job}, dict:new()),
     State#state{
-      batch = Batch,
+      current_vbucket = VBucket,
+      current_vbucket_list = [{Opaque, Op, Job}],
+      whole_batch = dict:new(),
       batch_size = 1,
       caller = nil,
       terminal_opaque = nil
@@ -212,7 +215,9 @@ num_workers(State) ->
 
 add_async_job(State, From, VBucket, Opaque, Op, Job) ->
     #state{
-          batch = Batch, batch_size = BatchSize,
+          current_vbucket = CurrentVBucket,
+          current_vbucket_list = CurrentList,
+          whole_batch = Batch, batch_size = BatchSize,
           worker_batch_size = WorkerBatchSize,
           max_workers = MaxWorkers
     } = State,
@@ -222,9 +227,19 @@ add_async_job(State, From, VBucket, Opaque, Op, Job) ->
         false ->
             ok
     end,
-    Batch2 = dict:append(VBucket, {Opaque, Op, Job}, Batch),
+    if VBucket == CurrentVBucket ->
+        CurrentList2 = [{Opaque, Op, Job} | CurrentList],
+        CurrentVBucket2 = CurrentVBucket,
+        Batch2 = Batch;
+    true ->
+        CurrentList2 = [{Opaque, Op, Job}],
+        CurrentVBucket2 = VBucket,
+        Batch2 = dict:append_list(CurrentVBucket, CurrentList, Batch)
+    end,
     BatchSize2 = BatchSize + 1,
-    State2 = State#state{batch = Batch2, batch_size = BatchSize2},
+    State2 = State#state{whole_batch = Batch2, batch_size = BatchSize2,
+                            current_vbucket = CurrentVBucket2,
+                            current_vbucket_list = CurrentList2},
     case BatchSize2 >= WorkerBatchSize of
         true ->
             case (num_workers(State) >= MaxWorkers) of
@@ -250,7 +265,7 @@ batching({?DELETEQ = Op, VBucket, <<>>, Key, <<>>, _CAS, Opaque}, From, State) -
 
 batching({?NOOP, Opaque}, From, State) ->
     #state{
-          batch = Batch, batch_size = BatchSize, socket = Socket
+          whole_batch = Batch, batch_size = BatchSize, socket = Socket
     } = State,
     case BatchSize > 0 of
         true ->
@@ -287,12 +302,18 @@ maybe_start_worker(#state{batch_size = 0} = State) ->
     State;
 maybe_start_worker(State) ->
     #state{
-            worker_sup = WorkerSup, batch = Batch, socket = Socket, worker_refs = WorkerRefs
+            worker_sup = WorkerSup, whole_batch = Batch, socket = Socket,
+            worker_refs = WorkerRefs, current_vbucket = CurrentVBucket,
+            current_vbucket_list = CurrentList
           } = State,
-    {ok, WorkerRef} = mc_batch_sup:start_worker(WorkerSup, Batch,
+
+    Batch2 = dict:append_list(CurrentVBucket, CurrentList, Batch),
+    {ok, WorkerRef} = mc_batch_sup:start_worker(WorkerSup, Batch2,
                                                 State#state.db, Socket),
     State#state{
-      batch = dict:new(),
+      current_vbucket = 0,
+      current_vbucket_list = [],
+      whole_batch = dict:new(),
       batch_size = 0,
       worker_refs = [WorkerRef|WorkerRefs]
      }.
