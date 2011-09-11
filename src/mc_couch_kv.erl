@@ -13,10 +13,12 @@ dig_out_attachment(Doc, FileName) ->
             {ok, iolist_to_binary(lists:reverse(Segs))}
     end.
 
-cleanup(EJson, []) -> EJson;
-cleanup(EJson, [Hd|Tl]) -> cleanup(proplists:delete(Hd, EJson), Tl).
+cleanup([], _Remove, Acc) -> lists:reverse(Acc);
+cleanup(EJson, [], Acc) -> lists:reverse(Acc, EJson);
+cleanup([{K,_V}|EJson], [K|Tl], Acc) -> cleanup(EJson, Tl, Acc);
+cleanup([KV|EJson], [_K|Tl], Acc) -> cleanup(EJson, Tl, [KV|Acc]).
 cleanup(EJson) ->
-    cleanup(EJson, [<<"_id">>, <<"_rev">>, <<"$flags">>, <<"$expiration">>]).
+    cleanup(EJson, [<<"_id">>, <<"_rev">>, <<"$flags">>, <<"$expiration">>], []).
 
 %% ok, Flags, Expiration, Cas, Data
 -spec get(_, binary()) -> {ok, integer(), integer(), integer(), binary()} | not_found.
