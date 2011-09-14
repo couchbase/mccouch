@@ -234,7 +234,13 @@ add_async_job(State, From, VBucket, Opaque, Op, Job) ->
     true ->
         CurrentList2 = [{Opaque, Op, Job}],
         CurrentVBucket2 = VBucket,
-        Batch2 = dict:append_list(CurrentVBucket, lists:reverse(CurrentList), Batch)
+        case CurrentList of
+        [] ->
+            Batch2 = Batch;
+        _ ->
+            Batch2 = dict:append_list(CurrentVBucket, 
+                    lists:reverse(CurrentList), Batch)
+        end
     end,
     BatchSize2 = BatchSize + 1,
     State2 = State#state{whole_batch = Batch2, batch_size = BatchSize2,
@@ -265,11 +271,19 @@ batching({?DELETEQ = Op, VBucket, <<>>, Key, <<>>, _CAS, Opaque}, From, State) -
 
 batching({?NOOP, Opaque}, From, State) ->
     #state{
-          whole_batch = Batch, batch_size = BatchSize, socket = Socket
+          whole_batch = Batch, batch_size = BatchSize, socket = Socket,
+          current_vbucket = CurrentVBucket, current_vbucket_list = CurrentList
     } = State,
     case BatchSize > 0 of
         true ->
-            mc_batch_sup:sync_update_docs(Batch, State#state.db, Socket);
+            case CurrentList of
+            [] ->
+                Batch2 = Batch;
+             _ ->
+                Batch2 = dict:append_list(CurrentVBucket,
+                        lists:reverse(CurrentList), Batch)
+            end,
+            mc_batch_sup:sync_update_docs(Batch2, State#state.db, Socket);
         false ->
             ok
     end,
