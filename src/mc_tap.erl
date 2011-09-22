@@ -81,7 +81,7 @@ process_tap_stream(BaseDbName, Opaque, VBucketId, TapFlags, Socket) ->
                 {ok, Acc}
         end,
 
-    {ok, finished} = couch_db:changes_since(Db, main_only, 0, F, finished),
+    {ok, finished} = couch_db:changes_since(Db, 0, F, finished),
 
     couch_db:close(Db).
 
