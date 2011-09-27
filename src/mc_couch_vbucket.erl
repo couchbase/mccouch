@@ -25,13 +25,9 @@ get_state(VBucket, State) ->
 
 set_vbucket(VBucket, StateName, State) ->
     DbName = mc_daemon:db_name(VBucket, State),
-    {ok, Db} = case couch_db:create(DbName, []) of
-                   {ok, D} ->
-                       ok = couch_db:set_revs_limit(D, 1),
-                       {ok, D};
-                   _ ->
-                       couch_db:open(DbName, [])
-               end,
+    {ok, Db} = couch_db:open(
+        DbName, [create, {user_ctx, #user_ctx{roles = [<<"_admin">>]}}]),
+    ok = couch_db:set_revs_limit(Db, 1),
     StateJson = ["{\"state\": \"", StateName, "\"}"],
     mc_couch_kv:set(Db, <<"_local/vbstate">>, 0, 0,
                     StateJson, true),
