@@ -37,6 +37,11 @@ set_vbucket(VBucket, StateName, State) ->
     mc_couch_kv:set(Db, <<"_local/vbstate">>, 0, 0,
                     StateJson, true),
     couch_db:close(Db),
+
+    Bucket = binary_to_list(mc_daemon:db_prefix(State)),
+    gen_event:notify(mc_couch_events,
+                     {set_vbucket, Bucket, VBucket, list_to_atom(StateName)}),
+
     {reply, #mc_response{}, processing, State}.
 
 handle_delete(VBucket, State) ->
