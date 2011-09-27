@@ -11,7 +11,7 @@
 -include("couch_db.hrl").
 -include("mc_constants.hrl").
 
-get_state(VBucket, State) ->
+get_state(VBucket, Prefix) when is_binary(Prefix) ->
     mc_daemon:with_open_db(fun(Db) ->
                                    case mc_couch_kv:get(Db, <<"_local/vbstate">>) of
                                        {ok, _Flags, _Expiration, 0, StateDoc} ->
@@ -21,7 +21,10 @@ get_state(VBucket, State) ->
                                            <<"dead">>
                                    end
                            end,
-                           VBucket, State).
+                           VBucket, Prefix);
+
+get_state(VBucket, State) ->
+    get_state(VBucket, mc_daemon:db_prefix(State)).
 
 set_vbucket(VBucket, StateName, State) ->
     DbName = mc_daemon:db_name(VBucket, State),

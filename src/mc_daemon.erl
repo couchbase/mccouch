@@ -54,13 +54,15 @@ init(Socket) ->
                             worker_sup = WorkerSup
                            }}.
 
+db_name(VBucket, Prefix) when is_binary(Prefix) ->
+    iolist_to_binary([Prefix, $/, integer_to_list(VBucket)]);
 db_name(VBucket, State)->
-    iolist_to_binary([State#state.db, $/, integer_to_list(VBucket)]).
+    db_name(VBucket, db_prefix(State)).
 
 db_prefix(State) -> State#state.db.
 
-with_open_db(F, VBucket, State) ->
-    case couch_db:open(db_name(VBucket, State), []) of
+with_open_db(F, VBucket, Prefix) when is_binary(Prefix) ->
+    case couch_db:open(db_name(VBucket, Prefix), []) of
         {ok, Db} ->
             try
                 F(Db)
@@ -69,9 +71,11 @@ with_open_db(F, VBucket, State) ->
             end;
         Other ->
             ?LOG_ERROR("MC daemon: Error opening vb ~p in ~p: ~p",
-                       [VBucket, db_prefix(State), Other]),
-            throw({open_db_error, db_prefix(State), VBucket, Other})
-    end.
+                       [VBucket, Prefix, Other]),
+            throw({open_db_error, Prefix, VBucket, Other})
+    end;
+with_open_db(F, VBucket, State) ->
+    with_open_db(F, VBucket, db_prefix(State)).
 
 with_open_db(F, VBucket, State, Def) ->
     case catch(with_open_db(F, VBucket, State)) of
