@@ -33,7 +33,7 @@ set_vbucket(VBucket, StateName, State) ->
                    _ ->
                        couch_db:open(DbName, Options)
                end,
-    StateJson = ["{\"state\": \"", StateName, "\"}"],
+    StateJson = iolist_to_binary(["{\"state\": \"", StateName, "\"}"]),
     mc_couch_kv:set(Db, <<"_local/vbstate">>, 0, 0,
                     StateJson, true),
     couch_db:close(Db),
