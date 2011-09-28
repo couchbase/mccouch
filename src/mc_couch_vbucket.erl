@@ -18,7 +18,7 @@ get_state(VBucket, State) ->
                                            {J} = ?JSON_DECODE(StateDoc),
                                            proplists:get_value(<<"state">>, J);
                                        not_found ->
-                                           "dead"
+                                           <<"dead">>
                                    end
                            end,
                            VBucket, State).
