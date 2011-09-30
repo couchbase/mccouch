@@ -2,7 +2,7 @@
 
 -include("couch_db.hrl").
 
--export([get/2, grok_doc/1, set/6, delete/2, mk_doc/5]).
+-export([get/2, grok_doc/1, set/6, delete/2, mk_doc/5, mk_doc/6]).
 
 dig_out_attachment(Doc, FileName) ->
     case [A || A <- Doc#doc.atts, A#att.name == FileName] of
@@ -44,18 +44,26 @@ grok_doc(Doc) ->
             {ok, Flags, Expiration, 0, Encoded}
     end.
 
-mk_att_doc(Key, Flags, Expiration, Value, Reason) ->
-    #doc{id=Key,
-         body = {[
-                  {<<"$flags">>, Flags},
-                  {<<"$expiration">>, Expiration},
-                  {<<"$att_reason">>, Reason}
-                 ]},
-         atts = [#att{
-                    name= <<"value">>,
-                    type= <<"application/content-stream">>,
-                    data= Value}
-                ]}.
+mk_att_doc(Key, Flags, Expiration, Value, MetaData, Reason) ->
+    Doc = #doc{id=Key,
+               body = {[
+                   {<<"$flags">>, Flags},
+                   {<<"$expiration">>, Expiration},
+                   {<<"$att_reason">>, Reason}
+               ]},
+               atts = [#att{
+                   name= <<"value">>,
+                   type= <<"application/content-stream">>,
+                   data= Value}
+               ]},
+    case MetaData of
+        <<_T:8, _ML:8, Seqno:32, Cas:64, _VLen:32, _F:32>> ->
+            Doc#doc{
+                revs = {Seqno, [<<Cas:64, 0:64>>]} % Make revid 128 bits
+            };
+        <<>> ->
+            Doc
+    end.
 
 %% Reject docs that have keys starting with _ or $
 validate([]) -> ok;
@@ -82,27 +90,38 @@ parse_json(Value) ->
             throw({invalid_json, Value})
     end.
 
-mk_json_doc(Key, Flags, Expiration, Value) ->
+mk_json_doc(Key, Flags, Expiration, Value, MetaData) ->
     case (catch parse_json(Value)) of
         {invalid_json, _} ->
-            mk_att_doc(Key, Flags, Expiration, Value, <<"invalid_json">>);
+            mk_att_doc(Key, Flags, Expiration, Value, MetaData, <<"invalid_json">>);
         invalid_key ->
-            mk_att_doc(Key, Flags, Expiration, Value, <<"invalid_key">>);
+            mk_att_doc(Key, Flags, Expiration, Value, MetaData, <<"invalid_key">>);
         EJson ->
-            #doc{id=Key,
-                body={[
-                    {<<"$flags">>, Flags},
-                    {<<"$expiration">>, Expiration}
-                    | cleanup(EJson)]}
-                }
+            Doc = #doc{id=Key,
+                       body={[
+                           {<<"$flags">>, Flags},
+                           {<<"$expiration">>, Expiration}
+                           | cleanup(EJson)]}
+                      },
+            case MetaData of
+                <<_T:8, _ML:8, Seqno:32, Cas:64, _VLen:32, _F:32>> ->
+                    Doc#doc{
+                        revs = {Seqno, [<<Cas:64, 0:64>>]} % Make revid 128 bits
+                    };
+                <<>> ->
+                    Doc
+            end
     end.
 
 mk_doc(Key, Flags, Expiration, Value, WantJson) ->
+    mk_doc(Key, Flags, Expiration, Value, <<>>, WantJson).
+
+mk_doc(Key, Flags, Expiration, Value, MetaData, WantJson) ->
     case WantJson of
         true ->
-            mk_json_doc(Key, Flags, Expiration, Value);
+            mk_json_doc(Key, Flags, Expiration, Value, MetaData);
         _ ->
-            mk_att_doc(Key, Flags, Expiration, Value, <<"non-JSON mode">>)
+            mk_att_doc(Key, Flags, Expiration, Value, MetaData, <<"non-JSON mode">>)
     end.
 
 -spec set(_, binary(), integer(), integer(), binary(), boolean()) -> integer().

@@ -18,13 +18,15 @@ xmit(Socket, Data) -> gen_tcp:send(Socket, Data).
 respond(Magic, Socket, OpCode, Opaque, Res) ->
     KeyLen = bin_size(Res#mc_response.key),
     ExtraLen = bin_size(Res#mc_response.extra),
-    BodyLen = bin_size(Res#mc_response.body) + (KeyLen + ExtraLen),
+    EngineSpecificLen = bin_size(Res#mc_response.engine_specific),
+    BodyLen = bin_size(Res#mc_response.body) + (KeyLen + ExtraLen + EngineSpecificLen),
     Status = Res#mc_response.status,
     CAS = Res#mc_response.cas,
     ok = gen_tcp:send(Socket, <<Magic, OpCode:8, KeyLen:16,
                                ExtraLen:8, 0:8, Status:16,
                                BodyLen:32, Opaque:32, CAS:64>>),
     ok = xmit(Socket, Res#mc_response.extra),
+    ok = xmit(Socket, Res#mc_response.engine_specific),
     ok = xmit(Socket, Res#mc_response.key),
     ok = xmit(Socket, Res#mc_response.body).
 
@@ -72,6 +74,15 @@ process_message(Socket, StorageServer, <<?REQ_MAGIC:8, ?SETQ:8, KeyLen:16,
                                          CAS:64>>) ->
     {Extra, Key, Body} = read_message(Socket, KeyLen, ExtraLen, BodyLen),
     gen_fsm:sync_send_event(StorageServer, {?SETQ, VBucket, Extra, Key, Body, CAS, Opaque}, infinity);
+process_message(Socket, StorageServer, <<?REQ_MAGIC:8, ?SETQWITHMETA:8, KeyLen:16,
+                                         ExtraLen:8, 0:8, VBucket:16,
+                                         BodyLen:32,
+                                         Opaque:32,
+                                         CAS:64>>) ->
+    {Extra, Key, Body} = read_message(Socket, KeyLen, ExtraLen, BodyLen),
+    BodyLen1 = BodyLen - (KeyLen + ExtraLen),
+    gen_fsm:sync_send_event(StorageServer, {?SETQWITHMETA, VBucket, Extra, BodyLen1,
+        Key, Body, CAS, Opaque}, infinity);
 process_message(Socket, StorageServer, <<?REQ_MAGIC:8, ?DELETEQ:8, KeyLen:16,
                                          ExtraLen:8, 0:8, VBucket:16,
                                          BodyLen:32,

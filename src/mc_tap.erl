@@ -44,14 +44,16 @@ parse_tap_flags(Flags) ->
     [Flag || {Val, Flag} <- KnownFlags, (Val band Flags) == Val].
 
 emit_tap_doc(Socket, TapFlags, Opaque, VBucketId, Key, Flags, Expiration,
-             _Cas, Data) ->
-    Extras = <<0:16, TapFlags:16,   %% length, flags
-               0:8,                 %% TTL
-               0:8, 0:8, 0:8,       %% reserved
+             _Cas, Data, MetaData) ->
+    MetaDataLen = iolist_size(MetaData),
+    Extras = <<MetaDataLen:16,           %% engine_specific value length
+               TapFlags:16,              %% flags
+               0:8,                      %% TTL
+               0:8, 0:8, 0:8,            %% reserved
                Flags:32, Expiration:32>>,
     mc_connection:respond(?REQ_MAGIC, Socket, ?TAP_MUTATION, Opaque,
                           #mc_response{key=Key, status=VBucketId,
-                                       extra=Extras, body=Data}).
+                                       extra=Extras, body=Data, engine_specific=MetaData}).
 
 
 process_tap_stream(BaseDbName, Opaque, VBucketId, TapFlags, Socket) ->
@@ -70,14 +72,27 @@ process_tap_stream(BaseDbName, Opaque, VBucketId, TapFlags, Socket) ->
                 %% Ignore design documents
                 {ok, Acc};
            (#doc_info{id=Id} = DocInfo, Acc) ->
-                {ok, Flags, Expiration, Cas, Data} = case KeysOnly of
-                                                         true -> {ok, 0, 0, 0, <<>>};
-                                                         _ ->
-                                                             {ok, Doc} = couch_db:open_doc_int(Db, DocInfo, []),
-                                                             mc_couch_kv:grok_doc(Doc)
-                                                     end,
+                {ok, Revs, Flags, Expiration, Cas, Data} =
+                    case KeysOnly of
+                        true -> {ok, {}, 0, 0, 0, <<>>};
+                        _ ->
+                            {ok, Doc} = couch_db:open_doc_int(Db, DocInfo, []),
+                            {ok, Flags0, Expiration0, Cas0, Data0} = mc_couch_kv:grok_doc(Doc),
+                            {ok, Doc#doc.revs, Flags0, Expiration0, Cas0, Data0}
+                    end,
+                {RevPos, RevId} = case Revs of
+                    {RevPos0, [<<RevId0:64, _:64>> | _]} ->
+                        {RevPos0, RevId0};
+                    _ ->
+                        {0, 0}
+                end,
+                MetaData = <<1:8,          %% meta data tag
+                             20:8,         %% meta data length
+                             RevPos:32,    %% Rev pos
+                             RevId:64,     %% Rev Id
+                             0:32, 0:32>>, %% value length and flags don't need to be populated here
                 emit_tap_doc(Socket, OutFlags, Opaque, VBucketId, Id,
-                             Flags, Expiration, Cas, Data),
+                             Flags, Expiration, Cas, Data, MetaData),
                 {ok, Acc}
         end,
 
