@@ -59,10 +59,11 @@ mk_att_doc(Key, Flags, Expiration, Value, MetaData, Reason) ->
     case MetaData of
         <<_T:8, _ML:8, Seqno:32, Cas:64, _VLen:32, _F:32>> ->
             Doc#doc{
-                revs = {Seqno, [<<Cas:64, 0:64>>]} % Make revid 128 bits
+                revs = {Seqno, [<<Cas:64, Flags:32, Expiration:32>>]} % Make revid 128 bits
             };
         <<>> ->
-            Doc
+            CasRand = crypto:rand_bytes(8),
+            Doc#doc{revs = {0, [<<CasRand/binary, Flags:32, Expiration:32>>]}}
     end.
 
 %% Reject docs that have keys starting with _ or $
@@ -106,10 +107,11 @@ mk_json_doc(Key, Flags, Expiration, Value, MetaData) ->
             case MetaData of
                 <<_T:8, _ML:8, Seqno:32, Cas:64, _VLen:32, _F:32>> ->
                     Doc#doc{
-                        revs = {Seqno, [<<Cas:64, 0:64>>]} % Make revid 128 bits
+                        revs = {Seqno, [<<Cas:64, Flags:32, Expiration:32>>]} % Make revid 128 bits
                     };
                 <<>> ->
-                    Doc
+                    CasRand = crypto:rand_bytes(8),
+                    Doc#doc{revs = {0, [<<CasRand/binary, Flags:32, Expiration:32>>]}}
             end
     end.
 
