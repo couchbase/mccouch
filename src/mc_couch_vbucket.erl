@@ -43,7 +43,8 @@ set_vbucket(VBucket, StateName, State) ->
 
     Bucket = binary_to_list(mc_daemon:db_prefix(State)),
     gen_event:notify(mc_couch_events,
-                     {set_vbucket, Bucket, VBucket, list_to_atom(StateName)}),
+                     {set_vbucket, Bucket, VBucket,
+                      erlang:binary_to_atom(StateName, latin1)}),
 
     {reply, #mc_response{}, processing, State}.
 
@@ -108,11 +109,10 @@ handle_stats(Socket, Opaque, State) ->
                           mc_couch_stats:mk_stat("", "")).
 
 handle_set_state(VBucket, ?VB_STATE_ACTIVE, State) ->
-    set_vbucket(VBucket, "active", State);
+    set_vbucket(VBucket, <<"active">>, State);
 handle_set_state(VBucket, ?VB_STATE_REPLICA, State) ->
-    set_vbucket(VBucket, "replica", State);
+    set_vbucket(VBucket, <<"replica">>, State);
 handle_set_state(VBucket, ?VB_STATE_PENDING, State) ->
-    set_vbucket(VBucket, "pending", State);
+    set_vbucket(VBucket, <<"pending">>, State);
 handle_set_state(VBucket, ?VB_STATE_DEAD, State) ->
-    set_vbucket(VBucket, "dead", State).
-
+    set_vbucket(VBucket, <<"dead">>, State).
