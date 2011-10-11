@@ -33,11 +33,16 @@ start_link_worker(Batch, BucketName, Socket) ->
     {ok, proc_lib:spawn_link(?MODULE, sync_update_docs, [Batch, BucketName, Socket])}.
 
 sync_update_docs(Batch, BucketName, Socket) ->
-    UpdateOptions = case couch_config:get("mc_couch", "optimistic_writes", "true") of
+    UpdateOptions = [clobber] ++ case couch_config:get("mc_couch", "optimistic_writes", "true") of
                         "true" ->
-                            [clobber, optimistic];
+                            [optimistic];
                         _ ->
-                            [clobber]
+                            []
+                    end ++  case couch_config:get("mc_couch", "presorted", "true") of
+                        "true" ->
+                            [presorted];
+                        _ ->
+                            []
                     end,
     dict:fold(
       fun(VBucketId, Jobs, _Acc) ->
