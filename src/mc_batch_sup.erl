@@ -33,7 +33,7 @@ start_link_worker(Batch, BucketName, Socket) ->
     {ok, proc_lib:spawn_link(?MODULE, sync_update_docs, [Batch, BucketName, Socket])}.
 
 sync_update_docs(Batch, BucketName, Socket) ->
-    UpdateOptions = [clobber] ++ case couch_config:get("mc_couch", "optimistic_writes", "true") of
+    UpdateOptions = [clobber, return_errors_only] ++ case couch_config:get("mc_couch", "optimistic_writes", "true") of
                         "true" ->
                             [optimistic];
                         _ ->
@@ -63,18 +63,17 @@ sync_update_docs(Batch, BucketName, Socket) ->
                       {ok, Results} = couch_db:update_docs(
                                         Db, [Doc || {_Opaque, _Op, Doc} <- Docs], UpdateOptions),
                       lists:foreach(
-                        fun({{ok, _}, _}) ->
-                                ok;
-                           ({Error, {Opaque, Op, #doc{id = Key}}}) ->
+                        fun({Id, Error}) ->
+                                [{Op, Opaque}] = [{Op1, Opaque1} || {Op1, Opaque1, #doc{id=Id1}} <- Docs, Id == Id1],
                                 ErrorResp = #mc_response{
                                   status = ?EINTERNAL,
                                   body = io_lib:format(
                                            "Error persisting key ~s in database ~s: ~p",
-                                           [Key, DbName, Error])
+                                           [Id, DbName, Error])
                                  },
                                 mc_connection:respond(Socket, Op, Opaque, ErrorResp)
                         end,
-                        lists:zip(Results, Docs)),
+                        Results),
                       couch_db:close(Db);
                   Error ->
                       ErrorResp = #mc_response{
