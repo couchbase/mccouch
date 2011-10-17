@@ -77,8 +77,8 @@ process_tap_stream(BaseDbName, Opaque, VBucketId, TapFlags, Socket) ->
                         true ->
                             [RevInfo | _] = DocInfo#doc_info.revs,
                             {SeqR, RevR} = RevInfo#rev_info.rev,
-                            <<CasR:64, FlagsR:32, ExpirationR:32>> = RevR,
-                            {ok, {SeqR, [RevR]}, FlagsR, ExpirationR, CasR, <<>>};
+                            <<CasR:64, _VLen:32, FlagsR:32>> = RevR,
+                            {ok, {SeqR, [RevR]}, FlagsR, 0, CasR, <<>>};
                         _ ->
                             {ok, Doc} = couch_db:open_doc_int(Db, DocInfo, []),
                             {ok, Flags0, Expiration0, Cas0, Data0} = mc_couch_kv:grok_doc(Doc),

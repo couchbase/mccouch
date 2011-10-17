@@ -57,9 +57,9 @@ mk_att_doc(Key, Flags, Expiration, Value, MetaData, Reason) ->
                    data= Value}
                ]},
     case MetaData of
-        <<_T:8, _ML:8, Seqno:32, Cas:64, _VLen:32, _F:32>> ->
+        <<_T:8, _ML:8, Seqno:32, Cas:64, VLen:32, F:32>> ->
             Doc#doc{
-                revs = {Seqno, [<<Cas:64, Flags:32, Expiration:32>>]} % Make revid 128 bits
+                revs = {Seqno, [<<Cas:64, VLen:32, F:32>>]}
             };
         <<>> ->
             Doc
@@ -104,9 +104,9 @@ mk_json_doc(Key, Flags, Expiration, Value, MetaData) ->
                            | cleanup(EJson)]}
                       },
             case MetaData of
-                <<_T:8, _ML:8, Seqno:32, Cas:64, _VLen:32, _F:32>> ->
+                <<_T:8, _ML:8, Seqno:32, Cas:64, VLen:32, F:32>> ->
                     Doc#doc{
-                        revs = {Seqno, [<<Cas:64, Flags:32, Expiration:32>>]} % Make revid 128 bits
+                        revs = {Seqno, [<<Cas:64, VLen:32, F:32>>]}
                     };
                 <<>> ->
                     Doc
