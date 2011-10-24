@@ -64,7 +64,7 @@ sync_update_docs(Batch, BucketName, Socket) ->
                                         Db, [Doc || {_Opaque, _Op, Doc} <- Docs], UpdateOptions),
                       lists:foreach(
                         fun({Id, Error}) ->
-                                [{Op, Opaque}] = [{Op1, Opaque1} || {Op1, Opaque1, #doc{id=Id1}} <- Docs, Id == Id1],
+                                [{Opaque, Op}] = [{Opaque1, Op1} || {Opaque1, Op1, #doc{id=Id1}} <- Docs, Id == Id1],
                                 ErrorResp = #mc_response{
                                   status = ?EINTERNAL,
                                   body = io_lib:format(
