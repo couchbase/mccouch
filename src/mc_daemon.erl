@@ -333,10 +333,25 @@ handle_event(_Event, StateName, State) ->
 
 handle_sync_event({?SET_VBUCKET_STATE, VBucket, <<VBState:32>>, <<>>, <<>>, 0},
                   _From, _StateName, State) ->
-    mc_couch_vbucket:handle_set_state(VBucket, VBState, State);
+    mc_couch_vbucket:handle_set_state(VBucket, VBState, 0, State),
+    {reply, #mc_response{}, processing, State};
 handle_sync_event({?SET_VBUCKET_STATE, _, _, _, _, _} = Msg, _From, _StateName, State) ->
     ?LOG_INFO("Error handling set vbucket state: ~p.", [Msg]),
     {reply, #mc_response{status=?EINVAL}, processing, State};
+handle_sync_event({?SNAPSHOT_VB_STATES, <<>>, _} = Msg, _From, _StateName, State) ->
+    ?LOG_INFO("Error: Empty body in snapshot vb states: ~p", [Msg]),
+    {reply, #mc_response{status=?EINVAL}, processing, State};
+handle_sync_event({?SNAPSHOT_VB_STATES, Body, BodyLen},
+                  _From, _StateName, State) ->
+    case byte_size(Body) == BodyLen of
+    true ->
+        mc_couch_vbucket:handle_snapshot_states(Body, State),
+        {reply, #mc_response{}, processing, State};
+    false ->
+        ?LOG_INFO("Error: Body length mismatch in snapshot vb states: ~p, ~p",
+                  [byte_size(Body), BodyLen]),
+        {reply, #mc_response{status=?EINVAL}, processing, State}
+    end;
 handle_sync_event(_Event, _From, StateName, State) ->
     Reply = ok,
     {reply, Reply, StateName, State}.

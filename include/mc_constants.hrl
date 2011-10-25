@@ -51,9 +51,10 @@
 -define(SELECT_BUCKET, 16#89).
 
 %% vbucket stuff
--define(SET_VBUCKET_STATE, 16#3d).
--define(GET_VBUCKET_STATE, 16#3e).
--define(DELETE_VBUCKET,    16#3f).
+-define(SET_VBUCKET_STATE,  16#3d).
+-define(GET_VBUCKET_STATE,  16#3e).
+-define(DELETE_VBUCKET,     16#3f).
+-define(SNAPSHOT_VB_STATES, 16#50).
 
 %% VBucket States
 

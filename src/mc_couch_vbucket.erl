@@ -1,11 +1,12 @@
 -module(mc_couch_vbucket).
 
 -export([get_state/2,
-         set_vbucket/3,
+         set_vbucket/4,
          handle_delete/2,
          handle_stats/3,
          handle_db_stats/3,
-         handle_set_state/3,
+         handle_set_state/4,
+         handle_snapshot_states/2,
          list_vbuckets/1]).
 
 -include("couch_db.hrl").
@@ -26,7 +27,7 @@ get_state(VBucket, Prefix) when is_binary(Prefix) ->
 get_state(VBucket, State) ->
     get_state(VBucket, mc_daemon:db_prefix(State)).
 
-set_vbucket(VBucket, StateName, State) ->
+set_vbucket(VBucket, StateName, CheckpointId, State) ->
     DbName = mc_daemon:db_name(VBucket, State),
     Options = [{user_ctx, #user_ctx{roles = [<<"_admin">>]}}],
     {ok, Db} = case couch_db:create(DbName, Options) of
@@ -36,7 +37,8 @@ set_vbucket(VBucket, StateName, State) ->
                    _ ->
                        couch_db:open(DbName, Options)
                end,
-    StateJson = iolist_to_binary(["{\"state\": \"", StateName, "\"}"]),
+    StateJson = iolist_to_binary(["{\"state\": \"", StateName, "\", \"checkpoint_id\": ",
+                                  CheckpointId, "}"]),
     mc_couch_kv:set(Db, <<"_local/vbstate">>, 0, 0,
                     StateJson, true),
     couch_db:close(Db),
@@ -44,9 +46,7 @@ set_vbucket(VBucket, StateName, State) ->
     Bucket = binary_to_list(mc_daemon:db_prefix(State)),
     gen_event:notify(mc_couch_events,
                      {set_vbucket, Bucket, VBucket,
-                      erlang:binary_to_atom(StateName, latin1)}),
-
-    {reply, #mc_response{}, processing, State}.
+                      erlang:binary_to_atom(StateName, latin1)}).
 
 handle_delete(VBucket, State) ->
     DbName = mc_daemon:db_name(VBucket, State),
@@ -108,11 +108,17 @@ handle_stats(Socket, Opaque, State) ->
     mc_connection:respond(Socket, ?STAT, Opaque,
                           mc_couch_stats:mk_stat("", "")).
 
-handle_set_state(VBucket, ?VB_STATE_ACTIVE, State) ->
-    set_vbucket(VBucket, <<"active">>, State);
-handle_set_state(VBucket, ?VB_STATE_REPLICA, State) ->
-    set_vbucket(VBucket, <<"replica">>, State);
-handle_set_state(VBucket, ?VB_STATE_PENDING, State) ->
-    set_vbucket(VBucket, <<"pending">>, State);
-handle_set_state(VBucket, ?VB_STATE_DEAD, State) ->
-    set_vbucket(VBucket, <<"dead">>, State).
+handle_set_state(VBucket, ?VB_STATE_ACTIVE, CheckpointId, State) ->
+    set_vbucket(VBucket, <<"active">>, CheckpointId, State);
+handle_set_state(VBucket, ?VB_STATE_REPLICA, CheckpointId, State) ->
+    set_vbucket(VBucket, <<"replica">>, CheckpointId, State);
+handle_set_state(VBucket, ?VB_STATE_PENDING, CheckpointId, State) ->
+    set_vbucket(VBucket, <<"pending">>, CheckpointId, State);
+handle_set_state(VBucket, ?VB_STATE_DEAD, CheckpointId, State) ->
+    set_vbucket(VBucket, <<"dead">>, CheckpointId, State).
+
+handle_snapshot_states(<<>>, _State) ->
+    ok;
+handle_snapshot_states(<<VBucket:16, VBState:32, CheckpointId:64, Rest/binary>>, State) ->
+    handle_set_state(VBucket, VBState, CheckpointId, State),
+    handle_snapshot_states(Rest, State).
