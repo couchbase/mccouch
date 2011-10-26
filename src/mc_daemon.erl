@@ -190,7 +190,7 @@ processing({?DELETE_VBUCKET, _, _, _, _, _}, _From, State) ->
 processing({?FLUSH, _, _, _, _, _}, _From, State) ->
     ?LOG_INFO("FLUSHING ALL THE THINGS!", []),
     lists:foreach(fun({VB, VBState}) ->
-                          mc_couch_vbucket:set_vbucket(VB, VBState, State)
+                          mc_couch_vbucket:set_vbucket(VB, VBState, 0, State)
                   end, delete_db(State, State#state.db)),
     gen_event:notify(mc_couch_events,
                      {flush_all, binary_to_list(State#state.db)}),
