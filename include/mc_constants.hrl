@@ -56,6 +56,9 @@
 -define(DELETE_VBUCKET,     16#3f).
 -define(SNAPSHOT_VB_STATES, 16#50).
 
+%% vbucket batch stuff
+-define(VBUCKET_BATCH_COUNT, 16#51).
+
 %% VBucket States
 
 -define(VB_STATE_ACTIVE,  16#1).

@@ -26,12 +26,10 @@
           batch_ops = 0,
           terminal_opaque = nil,
           errors = [],
-          worker_batch_size,
+          next_vb_batch,
           current_vbucket,
           current_vbucket_list,
-          whole_batch,
-          batch_size = 0,
-          max_workers,
+          max_workers = 4,
           worker_sup,
           caller = nil,
           worker_refs = [],
@@ -42,15 +40,9 @@ start_link(Socket) ->
     gen_fsm:start_link(?MODULE, Socket, []).
 
 init(Socket) ->
-    WorkerBatchSize = list_to_integer(
-                        couch_config:get("mc_couch", "write_worker_batch_size", "100")),
-    MaxWorkers = list_to_integer(
-                   couch_config:get("mc_couch", "write_workers", "8")),
     {ok, WorkerSup} = mc_batch_sup:start_link(),
     {ok, processing, #state{db = <<"default">>,
                             socket = Socket,
-                            worker_batch_size = WorkerBatchSize,
-                            max_workers = MaxWorkers,
                             worker_sup = WorkerSup
                            }}.
 
@@ -123,8 +115,6 @@ create_async_batch(State, VBucket, Opaque, Op, Job) ->
     State#state{
       current_vbucket = VBucket,
       current_vbucket_list = [{Opaque, Op, Job}],
-      whole_batch = dict:new(),
-      batch_size = 1,
       caller = nil,
       terminal_opaque = nil
      }.
@@ -234,45 +224,27 @@ add_async_job(State, From, VBucket, Opaque, Op, Job) ->
     #state{
           current_vbucket = CurrentVBucket,
           current_vbucket_list = CurrentList,
-          whole_batch = Batch, batch_size = BatchSize,
-          worker_batch_size = WorkerBatchSize,
           max_workers = MaxWorkers
     } = State,
-    case (BatchSize < WorkerBatchSize) orelse (num_workers(State) < MaxWorkers) of
-        true ->
-            gen_fsm:reply(From, ok);
-        false ->
-            ok
-    end,
+
     if VBucket == CurrentVBucket ->
+        gen_fsm:reply(From, ok),
         CurrentList2 = [{Opaque, Op, Job} | CurrentList],
-        CurrentVBucket2 = CurrentVBucket,
-        Batch2 = Batch;
+        NewState = State#state{current_vbucket_list = CurrentList2},
+        NewState;
     true ->
-        CurrentList2 = [{Opaque, Op, Job}],
-        CurrentVBucket2 = VBucket,
-        case CurrentList of
-        [] ->
-            Batch2 = Batch;
-        _ ->
-            Batch2 = dict:append_list(CurrentVBucket, 
-                    CurrentList, Batch)
+        State2 = State#state{
+            next_vb_batch = {CurrentVBucket, CurrentList},
+            current_vbucket = VBucket,
+            current_vbucket_list = [{Opaque, Op, Job}]
+        },
+        case (num_workers(State) >= MaxWorkers) of
+            true ->
+                State2#state{caller = From};
+            false ->
+                gen_fsm:reply(From, ok),
+                maybe_start_worker(State2)
         end
-    end,
-    BatchSize2 = BatchSize + 1,
-    State2 = State#state{whole_batch = Batch2, batch_size = BatchSize2,
-                            current_vbucket = CurrentVBucket2,
-                            current_vbucket_list = CurrentList2},
-    case BatchSize2 >= WorkerBatchSize of
-        true ->
-            case (num_workers(State) >= MaxWorkers) of
-                true ->
-                    State2#state{caller = From};
-                false ->
-                    maybe_start_worker(State2)
-            end;
-        false ->
-            State2
     end.
 
 batching({?SETQ = Op, VBucket, <<Flags:32, Expiration:32>>, Key, Value,
@@ -300,30 +272,18 @@ batching({?DELETEQ = Op, VBucket, <<>>, Key, <<>>, _CAS, Opaque}, From, State) -
 
 batching({?NOOP, Opaque}, From, State) ->
     #state{
-          whole_batch = Batch, batch_size = BatchSize, socket = Socket,
+          socket = Socket,
           current_vbucket = CurrentVBucket, current_vbucket_list = CurrentList
     } = State,
-    case BatchSize > 0 of
-        true ->
-            case CurrentList of
-            [] ->
-                Batch2 = Batch;
-             _ ->
-                Batch2 = dict:append_list(CurrentVBucket,
-                        CurrentList, Batch)
-            end,
-            mc_batch_sup:sync_update_docs(Batch2, State#state.db, Socket);
-        false ->
-            ok
-    end,
+    mc_batch_sup:sync_update_docs(CurrentVBucket, CurrentList, State#state.db, Socket),
+    State2 = State#state{current_vbucket = 0, current_vbucket_list = []},
     case num_workers(State) of
         0 ->
             mc_connection:respond(Socket, ?NOOP, Opaque, #mc_response{}),
             gen_fsm:reply(From, ok),
-            {next_state, processing, State};
+            {next_state, processing, State2};
         _ ->
-            NewState = State#state{terminal_opaque = Opaque, caller = From},
-            {next_state, batch_ending, NewState}
+            {next_state, batch_ending, State2#state{terminal_opaque = Opaque, caller = From}}
     end.
 
 %% Everything else
@@ -352,28 +312,36 @@ handle_sync_event({?SNAPSHOT_VB_STATES, Body, BodyLen},
                   [byte_size(Body), BodyLen]),
         {reply, #mc_response{status=?EINVAL}, processing, State}
     end;
+handle_sync_event({?VBUCKET_BATCH_COUNT, <<>>} = Msg, _From, StateName, State) ->
+    ?LOG_INFO("Error: Missing batch count value in VBUCKET_BATCH_COUNT command: ~p", [Msg]),
+    {reply, #mc_response{status=?EINVAL}, StateName, State};
+handle_sync_event({?VBUCKET_BATCH_COUNT, <<BatchCounter:32>>},
+                  _From, StateName, State) ->
+   case BatchCounter =< 0 of
+   true ->
+       ?LOG_INFO("Error: Invalid batch count value in VBUCKET_BATCH_COUNT command: ~p",
+                 [BatchCounter]),
+       {reply, #mc_response{status=?EINVAL}, StateName, State};
+   false ->
+       NewState = State#state{max_workers=BatchCounter},
+       {reply, #mc_response{}, StateName, NewState}
+   end;
 handle_sync_event(_Event, _From, StateName, State) ->
     Reply = ok,
     {reply, Reply, StateName, State}.
 
-maybe_start_worker(#state{batch_size = 0} = State) ->
-    State;
 maybe_start_worker(State) ->
     #state{
-            worker_sup = WorkerSup, whole_batch = Batch, socket = Socket,
-            worker_refs = WorkerRefs, current_vbucket = CurrentVBucket,
-            current_vbucket_list = CurrentList
+            worker_sup = WorkerSup, socket = Socket,
+            worker_refs = WorkerRefs,
+            next_vb_batch = {VBucket, ItemList}
           } = State,
-    Batch2 = dict:append_list(CurrentVBucket, CurrentList, Batch),
-    {ok, WorkerRef} = mc_batch_sup:start_worker(WorkerSup, Batch2,
+    {ok, WorkerRef} = mc_batch_sup:start_worker(WorkerSup, VBucket, ItemList,
                                                 State#state.db, Socket),
     State#state{
-      current_vbucket = 0,
-      current_vbucket_list = [],
-      whole_batch = dict:new(),
-      batch_size = 0,
+      next_vb_batch = {},
       worker_refs = [WorkerRef|WorkerRefs]
-     }.
+    }.
 
 handle_info({'DOWN', Ref, process, _Pid, normal}, batching, State) ->
     #state{caller = From, worker_refs = WorkerRefs} = State,

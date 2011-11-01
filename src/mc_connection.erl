@@ -117,6 +117,16 @@ process_message(Socket, StorageServer, <<?REQ_MAGIC:8, ?SNAPSHOT_VB_STATES:8,
             gen_fsm:sync_send_all_state_event(StorageServer,
                                               {?SNAPSHOT_VB_STATES, Body, BodyLen},
                                               infinity));
+process_message(Socket, StorageServer, <<?REQ_MAGIC:8, ?VBUCKET_BATCH_COUNT:8,
+                                         KeyLen:16, ExtraLen:8, 0:8, _VBucket:16,
+                                         BodyLen:32,
+                                         Opaque:32,
+                                         _CAS:64>>) ->
+    {_Extra, _Key, Body} = read_message(Socket, KeyLen, ExtraLen, BodyLen),
+    respond(Socket, ?VBUCKET_BATCH_COUNT, Opaque,
+            gen_fsm:sync_send_all_state_event(StorageServer,
+                                              {?VBUCKET_BATCH_COUNT, Body},
+                                              infinity));
 process_message(Socket, StorageServer, <<?REQ_MAGIC:8, OpCode:8, KeyLen:16,
                                          ExtraLen:8, 0:8, VBucket:16,
                                          BodyLen:32,
