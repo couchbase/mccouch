@@ -54,10 +54,10 @@
 -define(SET_VBUCKET_STATE,  16#3d).
 -define(GET_VBUCKET_STATE,  16#3e).
 -define(DELETE_VBUCKET,     16#3f).
--define(SNAPSHOT_VB_STATES, 16#50).
+-define(SNAPSHOT_VB_STATES, 16#a6).
 
 %% vbucket batch stuff
--define(VBUCKET_BATCH_COUNT, 16#51).
+-define(VBUCKET_BATCH_COUNT, 16#a7).
 
 %% VBucket States
 
