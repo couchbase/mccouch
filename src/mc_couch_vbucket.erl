@@ -16,10 +16,9 @@ get_state(VBucket, Prefix) when is_binary(Prefix) ->
     mc_daemon:with_open_db(fun(Db) ->
                                    case mc_couch_kv:get(Db, <<"_local/vbstate">>) of
                                        {ok, _Flags, _Expiration, 0, StateDoc} ->
-                                           {J} = ?JSON_DECODE(StateDoc),
-                                           proplists:get_value(<<"state">>, J);
+                                           StateDoc;
                                        not_found ->
-                                           <<"dead">>
+                                           <<"{\"state\": \"dead\", \"checkpoint_id\": \"0\"}">>
                                    end
                            end,
                            VBucket, Prefix);
@@ -37,9 +36,10 @@ set_vbucket(VBucket, StateName, CheckpointId, State) ->
                    _ ->
                        couch_db:open(DbName, Options)
                end,
+    CheckpointId2 = list_to_binary(integer_to_list(CheckpointId)),
     StateJson = iolist_to_binary(["{\"state\": \"", StateName,
-                                  "\", \"checkpoint_id\": ",
-                                  integer_to_list(CheckpointId), "}"]),
+                                  "\", \"checkpoint_id\": \"",
+                                  CheckpointId2, "\"}"]),
     mc_couch_kv:set(Db, <<"_local/vbstate">>, 0, 0,
                     StateJson, true),
     couch_db:close(Db),
