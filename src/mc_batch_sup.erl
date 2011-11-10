@@ -27,6 +27,7 @@ init([]) ->
 start_worker(Sup, CurrentVBucket, CurrentList, BucketName, Socket) ->
    {ok, Pid} = supervisor:start_child(Sup, [CurrentVBucket, CurrentList, BucketName, Socket]),
    Ref = monitor(process, Pid),
+   Pid ! can_start,
    {ok, Ref}.
 
 start_link_worker(CurrentVBucket, CurrentList, BucketName, Socket) ->
@@ -34,6 +35,11 @@ start_link_worker(CurrentVBucket, CurrentList, BucketName, Socket) ->
                              [CurrentVBucket, CurrentList, BucketName, Socket])}.
 
 sync_update_docs(CurrentVBucket, CurrentList, BucketName, Socket) ->
+    receive
+        can_start ->
+            ok
+    end,
+
     UpdateOptions =
         [clobber, return_errors_only] ++
         case couch_config:get("mc_couch", "optimistic_writes", "true") of

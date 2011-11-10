@@ -28,7 +28,7 @@
           errors = [],
           next_vb_batch,
           current_vbucket,
-          current_vbucket_list,
+          current_vbucket_list = [],
           max_workers = 4,
           worker_sup,
           caller = nil,
@@ -275,9 +275,9 @@ batching({?NOOP, Opaque}, From, State) ->
           socket = Socket,
           current_vbucket = CurrentVBucket, current_vbucket_list = CurrentList
     } = State,
-    mc_batch_sup:sync_update_docs(CurrentVBucket, CurrentList, State#state.db, Socket),
-    State2 = State#state{current_vbucket = 0, current_vbucket_list = []},
-    case num_workers(State) of
+    State2 = maybe_start_worker(State#state{next_vb_batch = {CurrentVBucket, CurrentList},
+                                            current_vbucket = 0, current_vbucket_list = []}),
+    case num_workers(State2) of
         0 ->
             mc_connection:respond(Socket, ?NOOP, Opaque, #mc_response{}),
             gen_fsm:reply(From, ok),
@@ -336,12 +336,17 @@ maybe_start_worker(State) ->
             worker_refs = WorkerRefs,
             next_vb_batch = {VBucket, ItemList}
           } = State,
-    {ok, WorkerRef} = mc_batch_sup:start_worker(WorkerSup, VBucket, ItemList,
-                                                State#state.db, Socket),
-    State#state{
-      next_vb_batch = {},
-      worker_refs = [WorkerRef|WorkerRefs]
-    }.
+    case ItemList /= [] of
+        true ->
+            {ok, WorkerRef} = mc_batch_sup:start_worker(WorkerSup, VBucket, ItemList,
+                                                        State#state.db, Socket),
+            State#state{
+                next_vb_batch = {VBucket, []},
+                worker_refs = [WorkerRef|WorkerRefs]
+            };
+        false ->
+            State
+    end.
 
 handle_info({'DOWN', Ref, process, _Pid, normal}, batching, State) ->
     #state{caller = From, worker_refs = WorkerRefs} = State,
