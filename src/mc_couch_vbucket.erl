@@ -47,7 +47,8 @@ set_vbucket(VBucket, StateName, CheckpointId, State) ->
     Bucket = binary_to_list(mc_daemon:db_prefix(State)),
     gen_event:notify(mc_couch_events,
                      {set_vbucket, Bucket, VBucket,
-                      erlang:binary_to_atom(StateName, latin1)}).
+                      erlang:binary_to_atom(StateName, latin1),
+                      CheckpointId}).
 
 handle_delete(VBucket, State) ->
     DbName = mc_daemon:db_name(VBucket, State),
