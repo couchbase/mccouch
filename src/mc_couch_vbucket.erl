@@ -36,7 +36,7 @@ set_vbucket(VBucket, StateName, CheckpointId, State) ->
                    _ ->
                        couch_db:open(DbName, Options)
                end,
-    CheckpointId2 = list_to_binary(integer_to_list(CheckpointId)),
+    CheckpointId2 = integer_to_list(CheckpointId),
     StateJson = iolist_to_binary(["{\"state\": \"", StateName,
                                   "\", \"checkpoint_id\": \"",
                                   CheckpointId2, "\"}"]),
