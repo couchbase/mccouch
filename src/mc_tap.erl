@@ -44,7 +44,7 @@ parse_tap_flags(Flags) ->
     [Flag || {Val, Flag} <- KnownFlags, (Val band Flags) == Val].
 
 emit_tap_doc(Socket, TapFlags, Opaque, VBucketId, Key, Flags, Expiration,
-             _Cas, Data, MetaData) ->
+             Data, MetaData) ->
     MetaDataLen = iolist_size(MetaData),
     Extras = <<MetaDataLen:16,           %% engine_specific value length
                TapFlags:16,              %% flags
@@ -72,19 +72,19 @@ process_tap_stream(BaseDbName, Opaque, VBucketId, TapFlags, Socket) ->
                 %% Ignore design documents
                 {ok, Acc};
            (#doc_info{id=Id} = DocInfo, Acc) ->
-                {ok, Revs, Flags, Expiration, Cas, Data} =
+                {ok, Revs, Flags, Expiration, Data} =
                     case KeysOnly of
                         true ->
                             [RevInfo | _] = DocInfo#doc_info.revs,
                             {SeqR, RevR} = RevInfo#rev_info.rev,
-                            <<CasR:64, _VLen:32, FlagsR:32>> = RevR,
-                            {ok, {SeqR, [RevR]}, FlagsR, 0, CasR, <<>>};
+                            <<_CasR:64, _VLen:32, FlagsR:32>> = RevR,
+                            {ok, {SeqR, [RevR]}, FlagsR, 0, <<>>};
                         _ ->
                             {ok, Doc} = couch_db:open_doc_int(Db, DocInfo,
                                     [json_bin_body]),
-                            {ok, Flags0, Expiration0, Cas0, Data0} =
+                            {ok, Flags0, Expiration0, Data0} =
                                     mc_couch_kv:grok_doc(Doc),
-                            {ok, Doc#doc.revs, Flags0, Expiration0, Cas0, Data0}
+                            {ok, Doc#doc.revs, Flags0, Expiration0, Data0}
                     end,
                 {RevPos, RevId} = case Revs of
                     {RevPos0, [<<RevId0:64, _:64>> | _]} ->
@@ -98,7 +98,7 @@ process_tap_stream(BaseDbName, Opaque, VBucketId, TapFlags, Socket) ->
                              RevId:64,     %% Rev Id
                              0:32, 0:32>>, %% value length and flags don't need to be populated here
                 emit_tap_doc(Socket, OutFlags, Opaque, VBucketId, Id,
-                             Flags, Expiration, Cas, Data, MetaData),
+                             Flags, Expiration, Data, MetaData),
                 {ok, Acc}
         end,
 

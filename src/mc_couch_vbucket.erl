@@ -15,7 +15,7 @@
 get_state(VBucket, Prefix) when is_binary(Prefix) ->
     mc_daemon:with_open_db(fun(Db) ->
                                    case mc_couch_kv:get(Db, <<"_local/vbstate">>) of
-                                       {ok, _Flags, _Expiration, 0, StateDoc} ->
+                                       {ok, _Flags, _Expiration, StateDoc} ->
                                            StateDoc;
                                        not_found ->
                                            <<"{\"state\": \"dead\", \"checkpoint_id\": \"0\"}">>

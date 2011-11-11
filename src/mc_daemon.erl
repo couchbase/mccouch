@@ -83,9 +83,9 @@ with_open_db_or_einval(F, VBucket, State) ->
 
 handle_get_call(Db, Key) ->
     case mc_couch_kv:get(Db, Key) of
-        {ok, Flags, _Expiration, Cas, Data} ->
+        {ok, Flags, _Expiration, Data} ->
             FlagsBin = <<Flags:32>>,
-            #mc_response{extra=FlagsBin, cas=Cas, body=Data};
+            #mc_response{extra=FlagsBin, body=Data};
         _ ->
             #mc_response{status=1, body="Does not exist"}
     end.

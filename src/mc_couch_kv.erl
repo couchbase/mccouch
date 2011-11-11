@@ -53,10 +53,10 @@ grok_doc(Doc) ->
             <<"$expiration">>, StrippedJsonBinary2, 0),
     case dig_out_attachment(Doc, <<"value">>) of
         {ok, AttData} ->
-            {ok, Flags, Expiration, 0, AttData};
+            {ok, Flags, Expiration, AttData};
         _ ->
             Json = iolist_to_binary([${, StrippedJsonBinary3]),
-            {ok, Flags, Expiration, 0, Json}
+            {ok, Flags, Expiration, Json}
     end.
 
 mk_att_doc(Key, Flags, Expiration, Value, MetaData, Reason) ->
