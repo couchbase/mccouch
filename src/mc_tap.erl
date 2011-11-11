@@ -80,8 +80,10 @@ process_tap_stream(BaseDbName, Opaque, VBucketId, TapFlags, Socket) ->
                             <<CasR:64, _VLen:32, FlagsR:32>> = RevR,
                             {ok, {SeqR, [RevR]}, FlagsR, 0, CasR, <<>>};
                         _ ->
-                            {ok, Doc} = couch_db:open_doc_int(Db, DocInfo, []),
-                            {ok, Flags0, Expiration0, Cas0, Data0} = mc_couch_kv:grok_doc(Doc),
+                            {ok, Doc} = couch_db:open_doc_int(Db, DocInfo,
+                                    [json_bin_body]),
+                            {ok, Flags0, Expiration0, Cas0, Data0} =
+                                    mc_couch_kv:grok_doc(Doc),
                             {ok, Doc#doc.revs, Flags0, Expiration0, Cas0, Data0}
                     end,
                 {RevPos, RevId} = case Revs of
