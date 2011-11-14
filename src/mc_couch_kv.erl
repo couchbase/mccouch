@@ -55,7 +55,7 @@ grok_doc(Doc) ->
         {ok, AttData} ->
             {ok, Flags, Expiration, AttData};
         _ ->
-            Json = iolist_to_binary([${, StrippedJsonBinary3]),
+            Json = [${, StrippedJsonBinary3],
             {ok, Flags, Expiration, Json}
     end.
 

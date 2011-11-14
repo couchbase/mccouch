@@ -44,16 +44,17 @@ parse_tap_flags(Flags) ->
     [Flag || {Val, Flag} <- KnownFlags, (Val band Flags) == Val].
 
 emit_tap_doc(Socket, TapFlags, Opaque, VBucketId, Key, Flags, Expiration,
-             Data, MetaData) ->
-    MetaDataLen = iolist_size(MetaData),
-    Extras = <<MetaDataLen:16,           %% engine_specific value length
+            Data, EngineSpecific) ->
+    EngineSpecificLen = iolist_size(EngineSpecific),
+    Extras = <<EngineSpecificLen:16,     %% engine_specific value length
                TapFlags:16,              %% flags
                0:8,                      %% TTL
                0:8, 0:8, 0:8,            %% reserved
                Flags:32, Expiration:32>>,
     mc_connection:respond(?REQ_MAGIC, Socket, ?TAP_MUTATION, Opaque,
                           #mc_response{key=Key, status=VBucketId,
-                                       extra=Extras, body=Data, engine_specific=MetaData}).
+                                       extra=Extras, body=Data,
+                                       engine_specific=EngineSpecific}).
 
 
 process_tap_stream(BaseDbName, Opaque, VBucketId, TapFlags, Socket) ->
