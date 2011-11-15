@@ -103,7 +103,8 @@ process_tap_stream(BaseDbName, Opaque, VBucketId, TapFlags, Socket) ->
                 {ok, Acc}
         end,
 
-    {ok, finished} = couch_db:changes_since(Db, 0, F, finished),
+    {ok, finished} = couch_db:fast_reads(Db,
+            fun() -> couch_db:changes_since(Db, 0, F, finished) end),
 
     couch_db:close(Db).
 
