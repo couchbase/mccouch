@@ -122,5 +122,6 @@ handle_set_state(VBucket, ?VB_STATE_DEAD, CheckpointId, State) ->
 handle_snapshot_states(<<>>, _State) ->
     ok;
 handle_snapshot_states(<<VBucket:16, VBState:32, CheckpointId:64, Rest/binary>>, State) ->
+    ?LOG_DEBUG("Checkpointing vbucket state (~p, ~p, ~p)", [VBucket, VBState, CheckpointId]),
     handle_set_state(VBucket, VBState, CheckpointId, State),
     handle_snapshot_states(Rest, State).
