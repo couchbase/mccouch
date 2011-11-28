@@ -119,9 +119,58 @@ handle_set_state(VBucket, ?VB_STATE_PENDING, CheckpointId, State) ->
 handle_set_state(VBucket, ?VB_STATE_DEAD, CheckpointId, State) ->
     set_vbucket(VBucket, <<"dead">>, CheckpointId, State).
 
-handle_snapshot_states(<<>>, _State) ->
+%% couch_db:create for lots of databases takes a lot of time
+%% (apparently, due to lots of fsync calls during couch database
+%% creation). This function parallelizes vbucket databases creation in
+%% order to make it quick.
+quickly_create_missing_vbuckets(VBuckets, State) ->
+    SpawnPreparer =
+        fun (VBucket) ->
+                DbName = mc_daemon:db_name(VBucket, State),
+                Options = [{user_ctx, #user_ctx{roles = [<<"_admin">>]}}],
+                case couch_db:open(DbName, Options) of
+                    {ok, D} ->
+                        couch_db:close(D),
+                        %% if db is present, do nothing
+                        fun () -> ok end;
+                    _ ->
+                        %% if db is missing, create it in separate
+                        %% process and return function that'll wait
+                        %% for it's completion
+                        Pid = spawn(
+                                fun () ->
+                                        case couch_db:create(DbName, Options) of
+                                            {ok, D} ->
+                                                couch_db:close(D);
+                                            _ ->
+                                                ok
+                                        end
+                                end),
+                        MRef = erlang:monitor(process, Pid),
+                        fun () ->
+                                receive
+                                    {'DOWN', MRef, _, _, _} -> ok
+                                end
+                        end
+                end
+        end,
+    WaitFns = [SpawnPreparer(VBucket) || VBucket <- VBuckets],
+    lists:foreach(fun (WaitFn) -> WaitFn() end,
+                  WaitFns).
+
+handle_snapshot_states(Msg, State) ->
+    VBuckets = extract_vbuckets(Msg, []),
+    quickly_create_missing_vbuckets(VBuckets, State),
+    do_handle_snapshot_states(Msg, State).
+
+extract_vbuckets(<<>>, Acc) ->
+    Acc;
+extract_vbuckets(<<VBucket:16, _VBState:32, _CheckpointId:64, Rest/binary>>, Acc) ->
+    extract_vbuckets(Rest, [VBucket | Acc]).
+
+do_handle_snapshot_states(<<>>, _State) ->
     ok;
-handle_snapshot_states(<<VBucket:16, VBState:32, CheckpointId:64, Rest/binary>>, State) ->
+do_handle_snapshot_states(<<VBucket:16, VBState:32, CheckpointId:64, Rest/binary>>, State) ->
     ?LOG_DEBUG("Checkpointing vbucket state (~p, ~p, ~p)", [VBucket, VBState, CheckpointId]),
     handle_set_state(VBucket, VBState, CheckpointId, State),
     handle_snapshot_states(Rest, State).
