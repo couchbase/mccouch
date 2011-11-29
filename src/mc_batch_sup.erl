@@ -60,25 +60,13 @@ sync_update_docs(CurrentVBucket, CurrentList, BucketName, Socket) ->
         ({Opaque, Op, {set, Key, Flags, Expiration, Value, MetaData, JsonMode}}) ->
             {Opaque, Op,mc_couch_kv:mk_doc(Key, Flags, Expiration, Value, MetaData, JsonMode)};
         ({Opaque, Op, {delete, Key}}) ->
-            {Opaque, Op, #doc{id = Key, deleted = true, body = {[]}}}
+            {Opaque, Op, #doc{id = Key, deleted = true}}
         end, CurrentList),
     DbName = iolist_to_binary([<<BucketName/binary, $/>>, integer_to_list(CurrentVBucket)]),
     case couch_db:open_int(DbName, []) of
         {ok, Db} ->
-            {ok, Results} = couch_db:update_docs(Db, [Doc || {_Opaque, _Op, Doc} <- Docs],
+            ok = couch_db:update_docs(Db, [Doc || {_Opaque, _Op, Doc} <- Docs],
                                                  UpdateOptions),
-            lists:foreach(
-                fun({Id, Error}) ->
-                    [{Opaque, Op}] = [{Opaque1, Op1} ||
-                                      {Opaque1, Op1, #doc{id=Id1}} <- Docs, Id == Id1],
-                    ErrorResp = #mc_response{
-                        status = ?EINTERNAL,
-                        body = io_lib:format(
-                            "Error persisting key ~s in database ~s: ~p",
-                             [Id, DbName, Error])
-                    },
-                    mc_connection:respond(Socket, Op, Opaque, ErrorResp)
-                end, Results),
             couch_db:close(Db);
         Error ->
             ErrorResp = #mc_response{

@@ -67,28 +67,27 @@ process_tap_stream(BaseDbName, Opaque, VBucketId, TapFlags, Socket) ->
 
     OutFlags = case KeysOnly of true -> ?TAP_FLAG_NO_VALUE; _ -> 0 end,
 
-    F = fun(#doc_info{revs=[#rev_info{deleted=true}|_]}, Acc) ->
+    F = fun(#doc_info{deleted=true}, Acc) ->
                 {ok, Acc}; %% Ignore deleted docs
            (#doc_info{id = <<"_design/",_/binary>>}, Acc) ->
                 %% Ignore design documents
                 {ok, Acc};
-           (#doc_info{id=Id} = DocInfo, Acc) ->
-                {ok, Revs, Flags, Expiration, Data} =
+           (#doc_info{id=Id, rev=Rev} = DocInfo, Acc) ->
+                {ok, Rev, Flags, Expiration, Data} =
                     case KeysOnly of
                         true ->
-                            [RevInfo | _] = DocInfo#doc_info.revs,
-                            {SeqR, RevR} = RevInfo#rev_info.rev,
+                            {SeqR, RevR} = Rev,
                             <<_CasR:64, _VLen:32, FlagsR:32>> = RevR,
-                            {ok, {SeqR, [RevR]}, FlagsR, 0, <<>>};
+                            {ok, {SeqR, RevR}, FlagsR, 0, <<>>};
                         _ ->
                             {ok, Doc} = couch_db:open_doc_int(Db, DocInfo,
                                     [json_bin_body]),
                             {ok, Flags0, Expiration0, Data0} =
                                     mc_couch_kv:grok_doc(Doc),
-                            {ok, Doc#doc.revs, Flags0, Expiration0, Data0}
+                            {ok, Doc#doc.rev, Flags0, Expiration0, Data0}
                     end,
-                {RevPos, RevId} = case Revs of
-                    {RevPos0, [<<RevId0:64, _:64>> | _]} ->
+                {RevPos, RevId} = case Rev of
+                    {RevPos0, <<RevId0:64, _:64>>} ->
                         {RevPos0, RevId0};
                     _ ->
                         {0, 0}

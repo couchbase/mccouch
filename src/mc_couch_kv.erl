@@ -4,15 +4,6 @@
 
 -export([get/2, grok_doc/1, set/6, delete/2, mk_doc/5, mk_doc/6]).
 
-dig_out_attachment(Doc, FileName) ->
-    case [A || A <- Doc#doc.atts, A#att.name == FileName] of
-        [] ->
-            not_found;
-        [Att] ->
-            Segs = couch_doc:att_foldl(Att, fun(Seg, Acc) -> [Seg|Acc] end, []),
-            {ok, iolist_to_binary(lists:reverse(Segs))}
-    end.
-
 %% ok, Flags, Expiration, Cas, Data
 -spec get(_, binary()) -> {ok, integer(), integer(), integer(), binary()} | not_found.
 get(Db, Key) ->
@@ -46,34 +37,30 @@ fast_parse_leading_key_number(Item, StrippedJson, Default) ->
 %% ok, Flags, Expiration, Cas, Data
 -spec grok_doc(#doc{}) -> {ok, integer(), integer(), integer(), binary()}.
 grok_doc(Doc) ->
-    #doc{body= <<${, StrippedJsonBinary/binary>>} = Doc,
+    #doc{json= <<${, StrippedJsonBinary/binary>>, binary=Binary} = Doc,
     {Flags, StrippedJsonBinary2} = fast_parse_leading_key_number(
             <<"$flags">>, StrippedJsonBinary, 0),
     {Expiration, StrippedJsonBinary3} = fast_parse_leading_key_number(
             <<"$expiration">>, StrippedJsonBinary2, 0),
-    case dig_out_attachment(Doc, <<"value">>) of
-        {ok, AttData} ->
-            {ok, Flags, Expiration, AttData};
-        _ ->
+    case Binary of
+        nil ->
             Json = [${, StrippedJsonBinary3],
-            {ok, Flags, Expiration, Json}
+            {ok, Flags, Expiration, Json};
+        _ ->
+            {ok, Flags, Expiration, Binary}
     end.
 
 mk_att_doc(Key, Flags, Expiration, Value, MetaData, Reason) ->
     Doc = #doc{id=Key,
-               body = iolist_to_binary(
+               json = iolist_to_binary(
                    ["{\"$flags\":", integer_to_list(Flags),
                    ",\"$expiration\":", integer_to_list(Expiration),
                    ",\"$att_reason\":\"", Reason, "\"}"]),
-               atts = [#att{
-                   name= <<"value">>,
-                   type= <<"application/content-stream">>,
-                   data= Value}
-               ]},
+               binary = Value},
     case MetaData of
         <<_T:8, _ML:8, Seqno:32, Cas:64, VLen:32, F:32>> ->
             Doc#doc{
-                revs = {Seqno, [<<Cas:64, VLen:32, F:32>>]}
+                rev = {Seqno, <<Cas:64, VLen:32, F:32>>}
             };
         <<>> ->
             Doc
@@ -90,7 +77,7 @@ mk_json_doc(Key, Flags, Expiration, Value, MetaData) ->
             mk_att_doc(Key, Flags, Expiration, Value, MetaData, <<"invalid_json">>);
         {ok, <<${, Json/binary>>} -> % remove leading curly
             Doc = #doc{id=Key, % now add in new meta
-                       body=iolist_to_binary(
+                       json=iolist_to_binary(
                             ["{\"$flags\":", integer_to_list(Flags),
                             ",\"$expiration\":", integer_to_list(Expiration),
                             ",", Json])
@@ -98,7 +85,7 @@ mk_json_doc(Key, Flags, Expiration, Value, MetaData) ->
             case MetaData of
                 <<_T:8, _ML:8, Seqno:32, Cas:64, VLen:32, F:32>> ->
                     Doc#doc{
-                        revs = {Seqno, [<<Cas:64, VLen:32, F:32>>]}
+                        rev = {Seqno, <<Cas:64, VLen:32, F:32>>}
                     };
                 <<>> ->
                     Doc
@@ -119,11 +106,11 @@ mk_doc(Key, Flags, Expiration, Value, MetaData, WantJson) ->
 -spec set(_, binary(), integer(), integer(), binary(), boolean()) -> integer().
 set(Db, Key, Flags, Expiration, Value, JsonMode) ->
     Doc = mk_doc(Key, Flags, Expiration, Value, JsonMode),
-    {ok, _NewRev} = couch_db:update_doc(Db, Doc, [clobber]),
+    ok = couch_db:update_doc(Db, Doc, [clobber]),
     0.
 
 -spec delete(_, binary()) -> ok|not_found.
 delete(Db, Key) ->
-    Doc = #doc{id = Key, deleted = true, body = {[]}},
-    {ok, _NewRev} = couch_db:update_doc(Db, Doc, [clobber]),
+    Doc = #doc{id = Key, deleted = true},
+    ok = couch_db:update_doc(Db, Doc, [clobber]),
     ok.
