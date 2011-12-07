@@ -298,10 +298,10 @@ handle_sync_event({?SET_VBUCKET_STATE, VBucket, <<VBState:32>>, <<>>, <<>>, 0},
     mc_couch_vbucket:handle_set_state(VBucket, VBState, 0, State),
     {reply, #mc_response{}, processing, State};
 handle_sync_event({?SET_VBUCKET_STATE, _, _, _, _, _} = Msg, _From, _StateName, State) ->
-    ?LOG_INFO("Error handling set vbucket state: ~p.", [Msg]),
+    ?LOG_ERROR("Error handling set vbucket state: ~p.", [Msg]),
     {reply, #mc_response{status=?EINVAL}, processing, State};
 handle_sync_event({?SNAPSHOT_VB_STATES, <<>>, _} = Msg, _From, _StateName, State) ->
-    ?LOG_INFO("Error: Empty body in snapshot vb states: ~p", [Msg]),
+    ?LOG_ERROR("Empty body in snapshot vb states: ~p", [Msg]),
     {reply, #mc_response{status=?EINVAL}, processing, State};
 handle_sync_event({?SNAPSHOT_VB_STATES, Body, BodyLen},
                   _From, _StateName, State) ->
@@ -310,19 +310,19 @@ handle_sync_event({?SNAPSHOT_VB_STATES, Body, BodyLen},
         mc_couch_vbucket:handle_snapshot_states(Body, State),
         {reply, #mc_response{}, processing, State};
     false ->
-        ?LOG_INFO("Error: Body length mismatch in snapshot vb states: ~p, ~p",
-                  [byte_size(Body), BodyLen]),
+        ?LOG_ERROR("Body length mismatch in snapshot vb states: ~p, ~p",
+                   [byte_size(Body), BodyLen]),
         {reply, #mc_response{status=?EINVAL}, processing, State}
     end;
 handle_sync_event({?VBUCKET_BATCH_COUNT, <<>>} = Msg, _From, StateName, State) ->
-    ?LOG_INFO("Error: Missing batch count value in VBUCKET_BATCH_COUNT command: ~p", [Msg]),
+    ?LOG_ERROR("Missing batch count value in VBUCKET_BATCH_COUNT command: ~p", [Msg]),
     {reply, #mc_response{status=?EINVAL}, StateName, State};
 handle_sync_event({?VBUCKET_BATCH_COUNT, <<BatchCounter:32>>},
                   _From, StateName, State) ->
    case BatchCounter =< 0 of
    true ->
-       ?LOG_INFO("Error: Invalid batch count value in VBUCKET_BATCH_COUNT command: ~p",
-                 [BatchCounter]),
+       ?LOG_ERROR("Invalid batch count value in VBUCKET_BATCH_COUNT command: ~p",
+                  [BatchCounter]),
        {reply, #mc_response{status=?EINVAL}, StateName, State};
    false ->
        NewState = State#state{max_workers=BatchCounter},
