@@ -40,6 +40,7 @@ start_link(Socket) ->
     gen_fsm:start_link(?MODULE, Socket, []).
 
 init(Socket) ->
+    link(Socket),
     {ok, WorkerSup} = mc_batch_sup:start_link(),
     {ok, processing, #state{db = <<"default">>,
                             socket = Socket,
