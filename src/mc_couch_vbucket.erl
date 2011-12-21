@@ -40,15 +40,21 @@ set_vbucket(VBucket, StateName, CheckpointId, State) ->
     StateJson = iolist_to_binary(["{\"state\": \"", StateName,
                                   "\", \"checkpoint_id\": \"",
                                   CheckpointId2, "\"}"]),
+
+    Bucket = binary_to_list(mc_daemon:db_prefix(State)),
+    StateAtom = erlang:binary_to_atom(StateName, latin1),
+
+    gen_event:sync_notify(mc_couch_events,
+                          {pre_set_vbucket,
+                           Bucket, VBucket, StateAtom, CheckpointId}),
+
     mc_couch_kv:set(Db, <<"_local/vbstate">>, 0, 0,
                     StateJson, true),
     couch_db:close(Db),
 
-    Bucket = binary_to_list(mc_daemon:db_prefix(State)),
-    gen_event:notify(mc_couch_events,
-                     {set_vbucket, Bucket, VBucket,
-                      erlang:binary_to_atom(StateName, latin1),
-                      CheckpointId}).
+    gen_event:sync_notify(mc_couch_events,
+                          {post_set_vbucket,
+                           Bucket, VBucket, StateAtom, CheckpointId}).
 
 handle_delete(VBucket, State) ->
     DbName = mc_daemon:db_name(VBucket, State),
