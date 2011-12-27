@@ -15,12 +15,14 @@
 
 get_state(VBucket, Prefix) when is_binary(Prefix) ->
     mc_daemon:with_open_db(fun(Db) ->
-                                   case mc_couch_kv:get(Db, <<"_local/vbstate">>) of
-                                       {ok, _Flags, _Expiration, StateDoc} ->
-                                           StateDoc;
-                                       not_found ->
-                                           <<"{\"state\": \"dead\", \"checkpoint_id\": \"0\"}">>
-                                   end
+                               case mc_couch_kv:get(Db, <<"_local/vbstate">>) of
+                                   {ok, _Flags, _Expiration, StateDoc} ->
+                                       StateDoc;
+                                   not_found ->
+                                       <<"{\"state\": \"dead\",
+                                           \"checkpoint_id\": \"0\",
+                                           \"max_deleted_seqno\": \"0\"}">>
+                               end
                            end,
                            VBucket, Prefix);
 
@@ -36,10 +38,20 @@ set_vbucket(VBucket, StateName, CheckpointId, State) ->
                    _ ->
                        couch_db:open(DbName, Options)
                end,
+
+    MaxDeletedSeqno =
+        case couch_db:open_doc(Db, <<"_local/vbstate">>, [ejson_body]) of
+            {ok, #doc{body = {Json}}} ->
+                couch_util:get_value(<<"max_deleted_seqno">>, Json, "0");
+            _ ->
+                "0"
+        end,
     CheckpointId2 = integer_to_list(CheckpointId),
-    StateJson = iolist_to_binary(["{\"state\": \"", StateName,
-                                  "\", \"checkpoint_id\": \"",
-                                  CheckpointId2, "\"}"]),
+    StateJson = iolist_to_binary(
+        ["{", "\"state\": \"", StateName, "\"",
+              ", \"checkpoint_id\": \"", CheckpointId2, "\"",
+              ", \"max_deleted_seqno\": \"", MaxDeletedSeqno, "\"",
+         "}"]),
     StateAtom = erlang:binary_to_existing_atom(StateName, latin1),
     Bucket = binary_to_list(mc_daemon:db_prefix(State)),
 
