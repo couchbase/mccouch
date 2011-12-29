@@ -45,6 +45,7 @@
 -define(RDECRQ,      16#3c).
 
 -define(SETQWITHMETA, 16#a3).
+-define(DELETEQWITHMETA, 16#a9).
 
 -define(CREATE_BUCKET, 16#85).
 -define(DELETE_BUCKET, 16#86).

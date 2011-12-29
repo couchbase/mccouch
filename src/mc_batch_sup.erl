@@ -46,7 +46,10 @@ sync_update_docs(CurrentVBucket, CurrentList, BucketName, Socket) ->
         ({Opaque, Op, {set, Key, Flags, Expiration, Value, MetaData, JsonMode}}) ->
             {Opaque, Op,mc_couch_kv:mk_doc(Key, Flags, Expiration, Value, MetaData, JsonMode)};
         ({Opaque, Op, {delete, Key}}) ->
-            {Opaque, Op, #doc{id = Key, deleted = true}}
+            {Opaque, Op, #doc{id = Key, deleted = true}};
+        ({Opaque, Op, {delete, Key, {Seqno, Cas, Len, Flags}}}) ->
+            {Opaque, Op, #doc{id = Key, deleted = true,
+                              rev = {Seqno, <<Cas:64, Len:32, Flags:32>>}}}
         end, CurrentList),
     DbName = iolist_to_binary([<<BucketName/binary, $/>>, integer_to_list(CurrentVBucket)]),
     case couch_db:open_int(DbName, []) of

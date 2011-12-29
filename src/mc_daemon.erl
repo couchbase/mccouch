@@ -119,6 +119,19 @@ create_async_batch(State, VBucket, Opaque, Op, Job) ->
       terminal_opaque = nil
      }.
 
+get_delete_metadata(DeleteBody, MetaDataLen) ->
+    case DeleteBody of
+        <<MetaData:MetaDataLen/binary>> ->
+            case MetaData of
+                <<_T:8, _L:8, Seqno:32, Cas:64, Len:32, Flags:32>> ->
+                    {ok, {Seqno, Cas, Len, Flags}};
+                _ ->
+                    error
+            end;
+        _ ->
+            error
+    end.
+
 processing({?SETQ = Op, VBucket, <<Flags:32, Expiration:32>>, Key, Value,
             _CAS, Opaque}, From, State) ->
     gen_fsm:reply(From, ok),
@@ -144,6 +157,18 @@ processing({?DELETEQ = Op, VBucket, <<>>, Key, <<>>, _CAS, Opaque}, From, State)
     NewState = create_async_batch(State, VBucket, Opaque, Op,
                                   {delete, Key}),
     {next_state, batching, NewState};
+
+processing({?DELETEQWITHMETA = Op, VBucket, <<MetaDataLen:32>>, Key, Body,
+            _CAS, Opaque}, From, State) ->
+    case get_delete_metadata(Body, MetaDataLen) of
+        {ok, MetaData} ->
+            gen_fsm:reply(From, ok),
+            NewState = create_async_batch(State, VBucket, Opaque, Op,
+                                          {delete, Key, MetaData}),
+            {next_state, batching, NewState};
+        error ->
+            {reply, #mc_response{status=?EINVAL}, processing, State}
+    end;
 
 processing({?GET, VBucket, <<>>, Key, <<>>, _CAS}, _From, State) ->
     with_open_db_or_einval(fun(Db) -> {reply, handle_get_call(Db, Key), processing, State} end,
@@ -275,6 +300,17 @@ batching({?DELETEQ = Op, VBucket, <<>>, Key, <<>>, _CAS, Opaque}, From, State) -
     NewState = add_async_job(State, From, VBucket, Opaque, Op,
                              {delete, Key}),
     {next_state, batching, NewState};
+
+batching({?DELETEQWITHMETA = Op, VBucket, <<MetaDataLen:32>>, Key, Body, _CAS,
+          Opaque}, From, State) ->
+    case get_delete_metadata(Body, MetaDataLen) of
+        {ok, MetaData} ->
+            NewState = add_async_job(State, From, VBucket, Opaque, Op,
+                                     {delete, Key, MetaData}),
+            {next_state, batching, NewState};
+        error ->
+            {reply, #mc_response{status=?EINVAL}, batching, State}
+    end;
 
 batching({?NOOP, Opaque}, From, State) ->
     #state{

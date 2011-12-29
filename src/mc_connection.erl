@@ -93,6 +93,14 @@ process_message(Socket, StorageServer, <<?REQ_MAGIC:8, ?DELETEQ:8, KeyLen:16,
                                          CAS:64>>) ->
     {Extra, Key, Body} = read_message(Socket, KeyLen, ExtraLen, BodyLen),
     gen_fsm:sync_send_event(StorageServer, {?DELETEQ, VBucket, Extra, Key, Body, CAS, Opaque}, infinity);
+process_message(Socket, StorageServer, <<?REQ_MAGIC:8, ?DELETEQWITHMETA:8,
+                                         KeyLen:16, ExtraLen:8, 0:8, VBucket:16,
+                                         BodyLen:32,
+                                         Opaque:32,
+                                         CAS:64>>) ->
+    {Extra, Key, Body} = read_message(Socket, KeyLen, ExtraLen, BodyLen),
+    gen_fsm:sync_send_event(StorageServer, {?DELETEQWITHMETA, VBucket, Extra,
+                                            Key, Body, CAS, Opaque}, infinity);
 process_message(Socket, StorageServer, <<?REQ_MAGIC:8, ?NOOP:8, KeyLen:16,
                                          ExtraLen:8, 0:8, _VBucket:16,
                                          BodyLen:32,
