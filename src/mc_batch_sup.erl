@@ -34,6 +34,45 @@ start_link_worker(CurrentVBucket, CurrentList, BucketName, Socket) ->
     {ok, proc_lib:spawn_link(?MODULE, sync_update_docs,
                              [CurrentVBucket, CurrentList, BucketName, Socket])}.
 
+update_max_deleted_seqno(Db, Docs) ->
+    %% Compute the max seqno of all deleted docs (if any) in this batch
+    MaxDeletedSeqno1 =
+        lists:foldl(
+            fun({_Opaque, ?DELETEQWITHMETA,
+                 #doc{deleted = true, rev = {Seqno, _MetaData}}}, Acc) ->
+                max(Seqno, Acc);
+            (_, Acc) ->
+                Acc
+            end, 0, Docs),
+
+    case MaxDeletedSeqno1 of
+        0 ->
+            %% No deleted docs in this batch
+            ok;
+        _ ->
+            {ok, #doc{body = {VbState}}} =
+                couch_db:open_doc(Db, <<"_local/vbstate">>, [ejson_body]),
+            State = couch_util:get_value(<<"state">>, VbState),
+            CheckpointId =
+                couch_util:get_value(<<"checkpoint_id">>, VbState),
+            MaxDeletedSeqno = list_to_integer(binary_to_list(
+                couch_util:get_value(<<"max_deleted_seqno">>, VbState))),
+
+            case (MaxDeletedSeqno1 > MaxDeletedSeqno) of
+                true ->
+                    MaxDeletedSeqno2 = integer_to_list(MaxDeletedSeqno1),
+                    NewVbState = iolist_to_binary(
+                        ["{", "\"state\": \"", State, "\"",
+                         ", \"checkpoint_id\": \"", CheckpointId, "\"",
+                         ", \"max_deleted_seqno\": \"", MaxDeletedSeqno2, "\"",
+                         "}"]),
+                    mc_couch_kv:set(Db, <<"_local/vbstate">>, 0, 0, NewVbState,
+                                    true);
+                false ->
+                    ok
+            end
+        end.
+
 sync_update_docs(CurrentVBucket, CurrentList, BucketName, Socket) ->
     receive
         can_start ->
@@ -54,6 +93,9 @@ sync_update_docs(CurrentVBucket, CurrentList, BucketName, Socket) ->
     DbName = iolist_to_binary([<<BucketName/binary, $/>>, integer_to_list(CurrentVBucket)]),
     case couch_db:open_int(DbName, []) of
         {ok, Db} ->
+            %% Update the _local vbucket state document with the max seqno of
+            %% all deleted docs (if any) in this batch.
+            update_max_deleted_seqno(Db, Docs),
             ok = couch_db:update_docs(Db, [Doc || {_Opaque, _Op, Doc} <- Docs],
                                                  []),
             couch_db:close(Db);
