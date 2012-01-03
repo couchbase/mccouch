@@ -29,6 +29,7 @@
           next_vb_batch,
           current_vbucket,
           current_vbucket_list = [],
+          batched_vbuckets = [],
           max_workers = 4,
           worker_sup,
           caller = nil,
@@ -116,6 +117,7 @@ create_async_batch(State, VBucket, Opaque, Op, Job) ->
     State#state{
       current_vbucket = VBucket,
       current_vbucket_list = [{Opaque, Op, Job}],
+      batched_vbuckets = [VBucket],
       caller = nil,
       terminal_opaque = nil
      }.
@@ -239,7 +241,8 @@ add_async_job(State, From, VBucket, Opaque, Op, Job) ->
         State2 = State#state{
             next_vb_batch = {CurrentVBucket, CurrentList},
             current_vbucket = VBucket,
-            current_vbucket_list = [{Opaque, Op, Job}]
+            current_vbucket_list = [{Opaque, Op, Job}],
+            batched_vbuckets = [VBucket | State#state.batched_vbuckets]
         },
         case (num_workers(State) >= MaxWorkers) of
             true ->
@@ -275,13 +278,15 @@ batching({?DELETEQ = Op, VBucket, <<>>, Key, <<>>, _CAS, Opaque}, From, State) -
 
 batching({?NOOP, Opaque}, From, State) ->
     #state{
-          socket = Socket,
-          current_vbucket = CurrentVBucket, current_vbucket_list = CurrentList
+          socket = Socket, current_vbucket = CurrentVBucket,
+          current_vbucket_list = CurrentList,
+          batched_vbuckets = BatchedVBuckets
     } = State,
     State2 = maybe_start_worker(State#state{next_vb_batch = {CurrentVBucket, CurrentList},
                                             current_vbucket = 0, current_vbucket_list = []}),
     case num_workers(State2) of
         0 ->
+            ensure_full_commit(State#state.db, BatchedVBuckets),
             mc_connection:respond(Socket, ?NOOP, Opaque, #mc_response{}),
             gen_fsm:reply(From, ok),
             {next_state, processing, State2};
@@ -351,6 +356,16 @@ maybe_start_worker(State) ->
             State
     end.
 
+ensure_full_commit(_BucketName, []) ->
+    ok;
+ensure_full_commit(BucketName, [VBucket|Rest]) ->
+    DbName = iolist_to_binary([<<BucketName/binary, $/>>,
+                              integer_to_list(VBucket)]),
+    {ok, Db} = couch_db:open_int(DbName, []),
+    couch_db:ensure_full_commit(Db),
+    couch_db:close(Db),
+    ensure_full_commit(BucketName, Rest).
+
 handle_info({'DOWN', Ref, process, _Pid, normal}, batching, State) ->
     #state{caller = From, worker_refs = WorkerRefs} = State,
     case From =:= nil of
@@ -365,14 +380,17 @@ handle_info({'DOWN', Ref, process, _Pid, normal}, batching, State) ->
 
 handle_info({'DOWN', Ref, process, _Pid, normal}, batch_ending, State) ->
     #state{
-            caller = From, terminal_opaque = Opaque, socket = Socket, worker_refs = WorkerRefs
+            caller = From, terminal_opaque = Opaque, socket = Socket,
+            worker_refs = WorkerRefs, batched_vbuckets = BatchedVBuckets
           } = State,
     WorkerRefs2 = WorkerRefs -- [Ref],
     case length(WorkerRefs2) of
         0 ->
+            ensure_full_commit(State#state.db, BatchedVBuckets),
             mc_connection:respond(Socket, ?NOOP, Opaque, #mc_response{}),
             gen_fsm:reply(From, ok),
-            {next_state, processing, State#state{worker_refs = WorkerRefs2}};
+            {next_state, processing, State#state{worker_refs = WorkerRefs2,
+                                                 batched_vbuckets = []}};
         _ ->
             {next_state, batch_ending, State#state{worker_refs = WorkerRefs2}}
     end.

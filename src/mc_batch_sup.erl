@@ -40,20 +40,6 @@ sync_update_docs(CurrentVBucket, CurrentList, BucketName, Socket) ->
             ok
     end,
 
-    UpdateOptions =
-        [clobber, return_errors_only] ++
-        case couch_config:get("mc_couch", "optimistic_writes", "true") of
-            "true" ->
-                [optimistic];
-             _ ->
-                []
-        end ++
-        case couch_config:get("mc_couch", "presorted", "true") of
-            "true" ->
-                [presorted];
-             _ ->
-                []
-        end,
     Docs = lists:map(
         fun({Opaque, Op, {set, Key, Flags, Expiration, Value, JsonMode}}) ->
             {Opaque, Op, mc_couch_kv:mk_doc(Key, Flags, Expiration, Value, JsonMode)};
@@ -66,7 +52,7 @@ sync_update_docs(CurrentVBucket, CurrentList, BucketName, Socket) ->
     case couch_db:open_int(DbName, []) of
         {ok, Db} ->
             ok = couch_db:update_docs(Db, [Doc || {_Opaque, _Op, Doc} <- Docs],
-                                                 UpdateOptions),
+                                                 []),
             couch_db:close(Db);
         Error ->
             ErrorResp = #mc_response{
