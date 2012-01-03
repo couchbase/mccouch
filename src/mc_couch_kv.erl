@@ -68,7 +68,7 @@ mk_att_doc(Key, Flags, Expiration, Value, MetaData, Reason) ->
 
 
 mk_json_doc(Key, Flags, Expiration, Value, MetaData) ->
-    case ejson:validate(Value, <<"_$">>) of
+    case ejson:validate(Value, <<"_$">>) of %"
         {error, invalid_json} ->
             mk_att_doc(Key, Flags, Expiration, Value, MetaData, <<"invalid_json">>);
         {error, private_field_set} ->
@@ -76,21 +76,24 @@ mk_json_doc(Key, Flags, Expiration, Value, MetaData) ->
         {error, garbage_after_value} ->
             mk_att_doc(Key, Flags, Expiration, Value, MetaData, <<"invalid_json">>);
         {ok, <<${, Json/binary>>} -> % remove leading curly
+            Append = case Json of
+                <<$}>> -> <<$}>>;
+                _ -> [",", Json]
+            end,
             Doc = #doc{id=Key, % now add in new meta
                        json=iolist_to_binary(
                             ["{\"$flags\":", integer_to_list(Flags),
                             ",\"$expiration\":", integer_to_list(Expiration),
-                            ",", Json])
+                            Append])
                       },
-            case MetaData of
-                <<_T:8, _ML:8, Seqno:32, Cas:64, VLen:32, F:32>> ->
-                    Doc#doc{
-                        rev = {Seqno, <<Cas:64, VLen:32, F:32>>}
-                    };
-                <<>> ->
-                    Doc
-            end
+            mk_json_doc_metadata(MetaData, Doc)
     end.
+
+mk_json_doc_metadata(<<>>, Doc) ->
+    Doc;
+mk_json_doc_metadata(<<_T:8, _ML:8, Seqno:32, Cas:64, VLen:32, F:32>>, Doc) ->
+    Doc#doc{rev = {Seqno, <<Cas:64, VLen:32, F:32>>}}.
+
 
 mk_doc(Key, Flags, Expiration, Value, WantJson) ->
     mk_doc(Key, Flags, Expiration, Value, <<>>, WantJson).
