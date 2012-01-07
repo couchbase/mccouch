@@ -44,6 +44,7 @@
 -define(RDECR,       16#3b).
 -define(RDECRQ,      16#3c).
 
+-define(GETMETA, 16#a0).
 -define(SETQWITHMETA, 16#a3).
 -define(DELETEQWITHMETA, 16#a9).
 

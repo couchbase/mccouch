@@ -2,7 +2,7 @@
 
 -include("couch_db.hrl").
 
--export([get/2, grok_doc/1, set/6, delete/2, mk_doc/5, mk_doc/6]).
+-export([get/2, get_meta/2, grok_doc/1, set/6, delete/2, mk_doc/5, mk_doc/6]).
 
 %% ok, Flags, Expiration, Cas, Data
 -spec get(_, binary()) -> {ok, integer(), integer(), binary()} | not_found.
@@ -12,6 +12,13 @@ get(Db, Key) ->
         _ -> not_found
     end.
 
+get_meta(Db, Key) ->
+    case couch_db:open_doc_int(Db, Key, []) of
+        {ok, Doc} ->
+            {Seqno, <<Cas:64, Len:32, Flags:32>>} = Doc#doc.rev,
+            {Seqno, Cas, Len, Flags};
+        _ -> not_found
+    end.
 
 %% ok, Flags, Expiration, Cas, Data
 -spec grok_doc(#doc{}) -> {ok, integer(), integer(), term()}.

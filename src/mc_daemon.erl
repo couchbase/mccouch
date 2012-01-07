@@ -92,6 +92,16 @@ handle_get_call(Db, Key) ->
             #mc_response{status=1, body="Does not exist"}
     end.
 
+handle_get_meta_call(Db, Key) ->
+    case mc_couch_kv:get_meta(Db, Key) of
+        {Seqno, Cas, Length, Flags} ->
+            #mc_response{extra = <<Flags:32>>,
+                         body = <<1:8, 20:8, Seqno:32,
+                                  Cas:64, Length:32, Flags:32>>};
+        _ ->
+            #mc_response{status=1, body="Does not exist"}
+    end.
+
 handle_set_call(Db, Key, Flags, Expiration, Value, JsonMode) ->
     NewCas = mc_couch_kv:set(Db,
                              Key, Flags,
@@ -174,6 +184,13 @@ processing({?GET, VBucket, <<>>, Key, <<>>, _CAS}, _From, State) ->
     with_open_db_or_einval(fun(Db) -> {reply, handle_get_call(Db, Key), processing, State} end,
                            VBucket, State);
 processing({?GET, _, _, _, _, _}, _From, State) ->
+    {reply, #mc_response{status=?EINVAL}, processing, State};
+processing({?GETMETA, VBucket, <<>>, Key, <<>>, _CAS}, _From, State) ->
+    with_open_db_or_einval(fun(Db) -> {reply, handle_get_meta_call(Db, Key),
+                                       processing, State}
+                           end,
+                           VBucket, State);
+processing({?GETMETA, _, _, _, _, _}, _From, State) ->
     {reply, #mc_response{status=?EINVAL}, processing, State};
 processing({?SET, VBucket, <<Flags:32, Expiration:32>>, Key, Value, _CAS},
            _From, State) ->
