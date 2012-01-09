@@ -100,10 +100,7 @@ handle_set_call(Db, Key, Flags, Expiration, Value, JsonMode) ->
     #mc_response{cas=NewCas}.
 
 handle_delete_call(Db, Key) ->
-    case mc_couch_kv:delete(Db, Key) of
-        ok -> #mc_response{};
-        not_found -> #mc_response{status=1, body="Not found"}
-    end.
+    ok = mc_couch_kv:delete(Db, Key).
 
 delete_db(State, Key) ->
     lists:map(fun({N, _VBucketState} = VBucketAndState) ->

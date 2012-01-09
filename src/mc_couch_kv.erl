@@ -5,7 +5,7 @@
 -export([get/2, grok_doc/1, set/6, delete/2, mk_doc/5, mk_doc/6]).
 
 %% ok, Flags, Expiration, Cas, Data
--spec get(_, binary()) -> {ok, integer(), integer(), integer(), binary()} | not_found.
+-spec get(_, binary()) -> {ok, integer(), integer(), binary()} | not_found.
 get(Db, Key) ->
     case couch_db:open_doc_int(Db, Key, [json_bin_body]) of
         {ok, Doc} -> grok_doc(Doc);
@@ -35,7 +35,7 @@ fast_parse_leading_key_number(Item, StrippedJson, Default) ->
 
 
 %% ok, Flags, Expiration, Cas, Data
--spec grok_doc(#doc{}) -> {ok, integer(), integer(), integer(), binary()}.
+-spec grok_doc(#doc{}) -> {ok, integer(), integer(), term()}.
 grok_doc(Doc) ->
     #doc{json= <<${, StrippedJsonBinary/binary>>, binary=Binary} = Doc,
     {Flags, StrippedJsonBinary2} = fast_parse_leading_key_number(
@@ -112,7 +112,7 @@ set(Db, Key, Flags, Expiration, Value, JsonMode) ->
     ok = couch_db:update_doc(Db, Doc, [clobber]),
     0.
 
--spec delete(_, binary()) -> ok|not_found.
+-spec delete(_, binary()) -> ok.
 delete(Db, Key) ->
     Doc = #doc{id = Key, deleted = true},
     ok = couch_db:update_doc(Db, Doc, [clobber]),
