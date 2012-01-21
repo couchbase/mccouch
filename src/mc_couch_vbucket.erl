@@ -53,6 +53,11 @@ set_vbucket(VBucket, StateName, CheckpointId, State) ->
                            Bucket, VBucket, StateAtom, CheckpointId}).
 
 handle_delete(VBucket, State) ->
+    Bucket = binary_to_list(mc_daemon:db_prefix(State)),
+
+    gen_event:sync_notify(mc_couch_events,
+                          {delete_vbucket, Bucket, VBucket}),
+
     DbName = mc_daemon:db_name(VBucket, State),
     couch_server:delete(DbName, []),
     #mc_response{}.
