@@ -179,13 +179,16 @@ processing({?DELETE_VBUCKET, _, _, _, _, _}, _From, State) ->
     {reply, #mc_response{status=?EINVAL}, processing, State};
 processing({?FLUSH, _, _, _, _, _}, _From, State) ->
     ?LOG_INFO("FLUSHING ALL THE THINGS!", []),
+
+    BucketStr = binary_to_list(State#state.db),
+
+    gen_event:notify(mc_couch_events, {pre_flush_all, BucketStr}),
     lists:foreach(fun({VB, VBState}) ->
                           {Parsed} = ?JSON_DECODE(VBState),
                           StateName = proplists:get_value(<<"state">>, Parsed),
                           mc_couch_vbucket:set_vbucket(VB, StateName, 0, State)
                   end, delete_db(State, State#state.db)),
-    gen_event:notify(mc_couch_events,
-                     {flush_all, binary_to_list(State#state.db)}),
+    gen_event:notify(mc_couch_events, {post_flush_all, BucketStr}),
     {reply, #mc_response{}, processing, State};
 processing({OpCode, VBucket, Header, Key, Body, CAS}, _From, State) ->
     ?LOG_INFO("MC daemon: got unhandled call: ~p/~p/~p/~p/~p/~p.",
