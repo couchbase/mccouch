@@ -44,16 +44,12 @@ set_vbucket(VBucket, StateName, CheckpointId, State) ->
     Bucket = binary_to_list(mc_daemon:db_prefix(State)),
     StateAtom = erlang:binary_to_atom(StateName, latin1),
 
-    gen_event:sync_notify(mc_couch_events,
-                          {pre_set_vbucket,
-                           Bucket, VBucket, StateAtom, CheckpointId}),
-
     mc_couch_kv:set(Db, <<"_local/vbstate">>, 0, 0,
                     StateJson, true),
     couch_db:close(Db),
 
     gen_event:sync_notify(mc_couch_events,
-                          {post_set_vbucket,
+                          {set_vbucket,
                            Bucket, VBucket, StateAtom, CheckpointId}).
 
 handle_delete(VBucket, State) ->
