@@ -31,7 +31,6 @@ set_vbucket(VBucket, StateName, CheckpointId, State) ->
     Options = [{user_ctx, #user_ctx{roles = [<<"_admin">>]}}],
     {ok, Db} = case couch_db:create(DbName, Options) of
                    {ok, D} ->
-                       ok = couch_db:set_revs_limit(D, 1),
                        {ok, D};
                    _ ->
                        couch_db:open(DbName, Options)
