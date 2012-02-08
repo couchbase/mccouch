@@ -361,9 +361,15 @@ ensure_full_commit(_BucketName, []) ->
 ensure_full_commit(BucketName, [VBucket|Rest]) ->
     DbName = iolist_to_binary([<<BucketName/binary, $/>>,
                               integer_to_list(VBucket)]),
-    {ok, Db} = couch_db:open_int(DbName, []),
-    couch_db:ensure_full_commit(Db),
-    couch_db:close(Db),
+    case couch_db:open_int(DbName, []) of
+        {ok, Db} ->
+            couch_db:ensure_full_commit(Db),
+            couch_db:close(Db);
+        {not_found,no_db_file} ->
+            error_logger:info_msg("~s vbucket ~p file deleted or missing.~n",
+                [BucketName, VBucket]),
+            ok
+        end,
     ensure_full_commit(BucketName, Rest).
 
 handle_info({'DOWN', Ref, process, _Pid, normal}, batching, State) ->
