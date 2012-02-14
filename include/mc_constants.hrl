@@ -59,6 +59,9 @@
 %% vbucket batch stuff
 -define(VBUCKET_BATCH_COUNT, 16#a7).
 
+% writes happened in ep-engine
+-define(NOTIFY_VBUCKET_UPDATE, 16#aa).
+
 %% VBucket States
 
 -define(VB_STATE_ACTIVE,  16#1).
@@ -89,6 +92,7 @@
 -define(UNKNOWN_COMMAND,  16#81).
 -define(ENOMEM,           16#82).
 -define(EINTERNAL,        16#84).
+-define(ETMPFAIL,         16#86).
 
 -record(mc_response, {
           status=0,

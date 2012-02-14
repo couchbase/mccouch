@@ -130,6 +130,20 @@ process_message(Socket, StorageServer, <<?REQ_MAGIC:8, ?VBUCKET_BATCH_COUNT:8,
             gen_fsm:sync_send_all_state_event(StorageServer,
                                               {?VBUCKET_BATCH_COUNT, Body},
                                               infinity));
+
+process_message(Socket, StorageServer, <<?REQ_MAGIC:8,
+                                       ?NOTIFY_VBUCKET_UPDATE:8,
+                                       KeyLen:16,
+                                       ExtraLen:8, 0:8, VBucket:16,
+                                       BodyLen:32,
+                                       Opaque:32,
+                                       CAS:64>>) ->
+
+  {Extra, Key, Body} = read_message(Socket, KeyLen, ExtraLen, BodyLen),
+  Msg = {?NOTIFY_VBUCKET_UPDATE, VBucket, Extra, Key, Body, CAS},
+  % Hand the request off to the server.
+  respond(Socket, ?NOTIFY_VBUCKET_UPDATE, Opaque,
+         gen_fsm:sync_send_all_state_event(StorageServer, Msg, infinity));
 process_message(Socket, StorageServer, <<?REQ_MAGIC:8, OpCode:8, KeyLen:16,
                                          ExtraLen:8, 0:8, VBucket:16,
                                          BodyLen:32,

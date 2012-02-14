@@ -299,6 +299,40 @@ batching({?NOOP, Opaque}, From, State) ->
 handle_event(_Event, StateName, State) ->
     {next_state, StateName, State}.
 
+handle_sync_event({?NOTIFY_VBUCKET_UPDATE, VBucket, <<>>, <<>>, Body, 0},
+                  _From, _StateName, State) ->
+    <<FileVersion:64, NewPos:64>> = Body,
+    DbName = iolist_to_binary([State#state.db, $/, integer_to_list(VBucket)]),
+    case couch_db:open_int(DbName, []) of
+        {ok, Db} ->
+            case couch_db:update_header_pos(Db, FileVersion, NewPos) of
+            ok ->
+                ResponseStatus = ?SUCCESS;
+            retry_new_file_version ->
+                % Retry, can happen when couchdb compacts the file
+                ResponseStatus = ?ETMPFAIL;
+            update_behind_couchdb ->
+                % shouldn't happen, somehow we wrote to a file and are behind
+                % of what couchdb has, maybe someone is updating the file
+                % on the couchdb side.
+                error_logger:info_msg("~s vbucket ~p behind couchdb version on update.~n",
+                    [State#state.db, VBucket]),
+                ResponseStatus = ?EINVAL;
+            update_file_ahead_of_couchdb ->
+                % shouldn't happen, somehow we wrote to a file and are ahead
+                % of what couchdb has.
+                error_logger:info_msg("~s vbucket ~p ahead of couchdb version on update.~n",
+                    [State#state.db, VBucket]),
+                ResponseStatus = ?EINVAL
+            end,
+            couch_db:close(Db);
+        {not_found,no_db_file} ->
+            error_logger:info_msg("~s vbucket ~p file deleted or missing.~n",
+                [State#state.db, VBucket]),
+            % Somehow the file we updated can't be found. What?
+            ResponseStatus = ?EINVAL
+        end,
+    {reply, #mc_response{status=ResponseStatus}, processing, State};
 handle_sync_event({?SET_VBUCKET_STATE, VBucket, <<VBState:32>>, <<>>, <<>>, 0},
                   _From, _StateName, State) ->
     mc_couch_vbucket:handle_set_state(VBucket, VBState, 0, State),
