@@ -301,7 +301,11 @@ handle_event(_Event, StateName, State) ->
 
 handle_sync_event({?NOTIFY_VBUCKET_UPDATE, VBucket, <<>>, <<>>, Body, 0},
                   _From, _StateName, State) ->
-    <<FileVersion:64, NewPos:64>> = Body,
+    <<FileVersion:64,
+      NewPos:64,
+      VBStateUpdated:32,
+      VBState:32,
+      VBCheckpoint:64>> = Body,
     DbName = iolist_to_binary([State#state.db, $/, integer_to_list(VBucket)]),
     case couch_db:open_int(DbName, []) of
         {ok, Db} ->
@@ -332,6 +336,18 @@ handle_sync_event({?NOTIFY_VBUCKET_UPDATE, VBucket, <<>>, <<>>, Body, 0},
             % Somehow the file we updated can't be found. What?
             ResponseStatus = ?EINVAL
         end,
+    case VBStateUpdated of
+    1 ->
+        VBStateAtom = mc_couch_vbucket:state_int_to_atom(VBState),
+        gen_event:sync_notify(mc_couch_events,
+                              {set_vbucket,
+                               binary_to_list(State#state.db),
+                               VBucket,
+                               VBStateAtom,
+                               VBCheckpoint});
+    0 ->
+        ok
+    end,
     {reply, #mc_response{status=ResponseStatus}, processing, State};
 handle_sync_event({?SET_VBUCKET_STATE, VBucket, <<VBState:32>>, <<>>, <<>>, 0},
                   _From, _StateName, State) ->

@@ -7,7 +7,8 @@
          handle_db_stats/3,
          handle_set_state/4,
          handle_snapshot_states/2,
-         list_vbuckets/1]).
+         list_vbuckets/1,
+         state_int_to_atom/1]).
 
 -include("couch_db.hrl").
 -include("mc_constants.hrl").
@@ -36,12 +37,11 @@ set_vbucket(VBucket, StateName, CheckpointId, State) ->
                        couch_db:open(DbName, Options)
                end,
     CheckpointId2 = integer_to_list(CheckpointId),
-    StateJson = iolist_to_binary(["{\"state\": \"", StateName,
+    StateJson = iolist_to_binary(["{\"state\": \"", atom_to_list(StateName),
                                   "\", \"checkpoint_id\": \"",
                                   CheckpointId2, "\"}"]),
 
     Bucket = binary_to_list(mc_daemon:db_prefix(State)),
-    StateAtom = erlang:binary_to_atom(StateName, latin1),
 
     mc_couch_kv:set(Db, <<"_local/vbstate">>, 0, 0,
                     StateJson, true),
@@ -49,7 +49,7 @@ set_vbucket(VBucket, StateName, CheckpointId, State) ->
 
     gen_event:sync_notify(mc_couch_events,
                           {set_vbucket,
-                           Bucket, VBucket, StateAtom, CheckpointId}).
+                           Bucket, VBucket, StateName, CheckpointId}).
 
 handle_delete(VBucket, State) ->
     Bucket = binary_to_list(mc_daemon:db_prefix(State)),
@@ -116,14 +116,18 @@ handle_stats(Socket, Opaque, State) ->
     mc_connection:respond(Socket, ?STAT, Opaque,
                           mc_couch_stats:mk_stat("", "")).
 
-handle_set_state(VBucket, ?VB_STATE_ACTIVE, CheckpointId, State) ->
-    set_vbucket(VBucket, <<"active">>, CheckpointId, State);
-handle_set_state(VBucket, ?VB_STATE_REPLICA, CheckpointId, State) ->
-    set_vbucket(VBucket, <<"replica">>, CheckpointId, State);
-handle_set_state(VBucket, ?VB_STATE_PENDING, CheckpointId, State) ->
-    set_vbucket(VBucket, <<"pending">>, CheckpointId, State);
-handle_set_state(VBucket, ?VB_STATE_DEAD, CheckpointId, State) ->
-    set_vbucket(VBucket, <<"dead">>, CheckpointId, State).
+state_int_to_atom(?VB_STATE_ACTIVE) ->
+    active;
+state_int_to_atom(?VB_STATE_REPLICA) ->
+    replica;
+state_int_to_atom(?VB_STATE_PENDING) ->
+    pending;
+state_int_to_atom(?VB_STATE_DEAD) ->
+    dead.
+
+
+handle_set_state(VBucket, StateInt, CheckpointId, State) ->
+    set_vbucket(VBucket, state_int_to_atom(StateInt), CheckpointId, State).
 
 %% couch_db:create for lots of databases takes a lot of time
 %% (apparently, due to lots of fsync calls during couch database
