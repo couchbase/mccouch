@@ -319,19 +319,19 @@ handle_sync_event({?NOTIFY_VBUCKET_UPDATE, VBucket, <<>>, <<>>, Body, 0},
                 % shouldn't happen, somehow we wrote to a file and are behind
                 % of what couchdb has, maybe someone is updating the file
                 % on the couchdb side.
-                error_logger:info_msg("~s vbucket ~p behind couchdb version on update.~n",
+                ?LOG_ERROR("~s vbucket ~p behind couchdb version on update.~n",
                     [State#state.db, VBucket]),
                 ResponseStatus = ?EINVAL;
             update_file_ahead_of_couchdb ->
                 % shouldn't happen, somehow we wrote to a file and are ahead
                 % of what couchdb has.
-                error_logger:info_msg("~s vbucket ~p ahead of couchdb version on update.~n",
+                ?LOG_ERROR("~s vbucket ~p ahead of couchdb version on update.~n",
                     [State#state.db, VBucket]),
                 ResponseStatus = ?EINVAL
             end,
             couch_db:close(Db);
         {not_found,no_db_file} ->
-            error_logger:info_msg("~s vbucket ~p file deleted or missing.~n",
+            ?LOG_ERROR("~s vbucket ~p file deleted or missing.~n",
                 [State#state.db, VBucket]),
             % Somehow the file we updated can't be found. What?
             ResponseStatus = ?EINVAL
@@ -416,7 +416,7 @@ ensure_full_commit(BucketName, [VBucket|Rest]) ->
             couch_db:ensure_full_commit(Db),
             couch_db:close(Db);
         {not_found,no_db_file} ->
-            error_logger:info_msg("~s vbucket ~p file deleted or missing.~n",
+            ?LOG_INFO("~s vbucket ~p file deleted or missing.~n",
                 [BucketName, VBucket]),
             ok
         end,

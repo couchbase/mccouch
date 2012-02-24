@@ -64,7 +64,7 @@ process_message(Socket, StorageServer, <<?REQ_MAGIC:8, ?STAT:8, KeyLen:16,
                                          BodyLen:32,
                                          Opaque:32,
                                          CAS:64>>) ->
-    error_logger:info_msg("Got a stat request for ~p.~n", [StorageServer]),
+    ?LOG_INFO("Got a stat request for ~p.~n", [StorageServer]),
 
     {Extra, Key, Body} = read_message(Socket, KeyLen, ExtraLen, BodyLen),
 
