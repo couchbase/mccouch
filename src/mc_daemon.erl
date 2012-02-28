@@ -338,7 +338,8 @@ handle_sync_event({?NOTIFY_VBUCKET_UPDATE, VBucket, <<>>, <<>>, Body, 0},
         end,
     case VBStateUpdated of
     1 ->
-        VBStateAtom = mc_couch_vbucket:state_int_to_atom(VBState),
+        VBStateBin = mc_couch_vbucket:state_int_to_binary(VBState),
+        VBStateAtom = binary_to_atom(VBStateBin, latin1),
         gen_event:sync_notify(mc_couch_events,
                               {set_vbucket,
                                binary_to_list(State#state.db),
